@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soterix-qa-core"
+version = "0.1.0"
+description = "Shared QA pipeline for the Soterix QA repos: QA Touch client and reporter, Jira layer."
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "pytest",
+]
+
+[project.optional-dependencies]
+jira = ["jira>=3.10"]
+dev = ["ruff>=0.15", "pytest-html"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
