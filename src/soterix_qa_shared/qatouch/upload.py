@@ -343,8 +343,11 @@ class QATouchUploadSink(ResultSink):
     # -- the sink interface -------------------------------------------------
 
     def finish(self, results: list[RunResult], context: RunContext | None = None) -> None:
-        # `context` is unused here: this sink was given its run key at
-        # construction, because it needs one to exist at all.
+        # `context` is accepted and unused: this sink was given its run key at
+        # construction, because it needs one to exist at all. The parameter
+        # stays because a sink author reads this file as the worked example,
+        # and a signature that disagrees with ResultSink teaches the wrong
+        # shape. The default is for direct callers in tests only.
         folded = collapse_to_cases(results, PYTEST_TO_QT)
         self.statuses = folded['statuses']
         self.durations = folded['durations']

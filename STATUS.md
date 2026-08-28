@@ -78,6 +78,11 @@ ruff lint (the ruff.toml is inert without one), the tag-equals-version guard
 (rule 4), the wheel-install import job (rule 9), and a per-interpreter
 shim-identity matrix.
 
+*Governance files.* `README.md`, `AGENTS.md`, `docs/STYLE.md` and
+`docs/writing/ste.md` are in place; `docs/CONVENTIONS.md` and a merge runbook
+are not. Still missing: a `MEMORY.md` pointer, and a run of
+`~/.claude/memory_lint.py`.
+
 *Decide the interpreter range here*, since it is that matrix's input. Both
 repos' venvs run 3.14.6, the UI's workflows pin 3.14, the API's gate pins
 3.12, and `pyproject` claims `>=3.11`. The real floor is 3.11
