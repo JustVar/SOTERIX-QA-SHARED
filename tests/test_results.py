@@ -6,12 +6,15 @@ id, and folding to QA Touch case keys is one sink's private step.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 from soterix_qa_shared.qatouch.artifacts import (
     RUN_RESULT_RECORD_FIELDS,
     RUN_RESULTS_FIELDS,
 )
 from soterix_qa_shared.qatouch.results import (
+    RunContext,
+    RunLedgerSink,
     RunResult,
     RunResultsFileSink,
     collapse_to_cases,
@@ -28,6 +31,12 @@ from soterix_qa_shared.qatouch.upload import (
 
 def _r(nodeid, outcome, **kw):
     return RunResult(nodeid=nodeid, outcome=outcome, **kw)
+
+
+def _ctx(**kw):
+    started = kw.pop('started', datetime(2026, 8, 28, 14, 2, tzinfo=UTC))
+    ended = kw.pop('ended', started + timedelta(seconds=1840))
+    return RunContext(started=started, ended=ended, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +187,9 @@ def test_a_case_covering_one_test_reports_one_nodeid():
 def test_run_record_matches_the_frozen_shape(tmp_path):
     """run_archive, run_report, run_suite and validate_run all read this."""
     path = tmp_path / 'logs' / 'last_run_results.json'
-    sink = RunResultsFileSink(path, run_key='RUN1', project_key='JlW1')
-    sink.finish([_r('t::a', 'failed', duration=1.5, case_key='K1')])
+    sink = RunResultsFileSink(path)
+    sink.finish([_r('t::a', 'failed', duration=1.5, case_key='K1')],
+                _ctx(run_key='RUN1', project_key='JlW1'))
     payload = json.loads(path.read_text())
     assert tuple(payload) == RUN_RESULTS_FIELDS
     assert tuple(payload['results'][0]) == RUN_RESULT_RECORD_FIELDS
@@ -190,7 +200,7 @@ def test_run_record_is_written_without_a_run_key(tmp_path):
     all, so the flaky history and the run cross-check saw no runs."""
     path = tmp_path / 'logs' / 'last_run_results.json'
     sink = RunResultsFileSink(path)
-    sink.finish([_r('t::a', 'passed')])
+    sink.finish([_r('t::a', 'passed')], _ctx())
     payload = json.loads(path.read_text())
     assert payload['armed'] is False
     assert payload['run_key'] is None
@@ -199,8 +209,8 @@ def test_run_record_is_written_without_a_run_key(tmp_path):
 
 def test_run_record_marks_an_armed_session(tmp_path):
     path = tmp_path / 'logs' / 'last_run_results.json'
-    sink = RunResultsFileSink(path, run_key='RUN1')
-    sink.finish([])
+    sink = RunResultsFileSink(path)
+    sink.finish([], _ctx(run_key='RUN1'))
     assert json.loads(path.read_text())['armed'] is True
 
 
@@ -209,7 +219,7 @@ def test_run_record_includes_unmapped_tests(tmp_path):
     path = tmp_path / 'logs' / 'last_run_results.json'
     sink = RunResultsFileSink(path)
     sink.finish([_r('t::mapped', 'passed', case_key='K1'),
-                 _r('t::unmapped', 'failed')])
+                 _r('t::unmapped', 'failed')], _ctx())
     rows = json.loads(path.read_text())['results']
     assert {r['nodeid']: r['case_key'] for r in rows} == {
         't::mapped': 'K1', 't::unmapped': None}
@@ -218,6 +228,137 @@ def test_run_record_includes_unmapped_tests(tmp_path):
 def test_run_record_write_failure_never_raises(tmp_path):
     """Rule 7: a local write must degrade, never kill the run."""
     sink = RunResultsFileSink(tmp_path / 'logs\x00bad' / 'x.json')
-    sink.finish([_r('t::a', 'passed')])   # no raise
+    sink.finish([_r('t::a', 'passed')], _ctx())   # no raise
     assert sink.error is not None
     assert 'NOT written' in sink.summary()[0]
+
+
+# ---------------------------------------------------------------------------
+# The tracked run ledger
+#
+# reports/ held 4.4 GB after a week of runs and is regenerable, so none of it
+# belongs in git. The fact that a run happened does: ~300 bytes answering
+# "when did this start failing" and "is the suite getting slower".
+# ---------------------------------------------------------------------------
+
+def test_an_unarmed_run_writes_no_ledger_row(tmp_path):
+    """71 exploratory runs in a week would bury the runs somebody meant."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed')], _ctx())
+    assert not (tmp_path / 'history').exists()
+    assert sink.summary() == []
+
+
+def test_an_armed_run_appends_one_line(tmp_path):
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed'), _r('t::b', 'failed')],
+                _ctx(run_key='d6pw', env='qa', branch='main', commit='0f912d0',
+                     target=('tests/ui',), exitstatus=1))
+    path = tmp_path / 'history' / '2026-08.jsonl'
+    lines = path.read_text(encoding='utf-8').splitlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row['at'].startswith('2026-08-28T14:02')
+    assert row['env'] == 'qa'
+    assert row['branch'] == 'main'
+    assert row['commit'] == '0f912d0'
+    assert row['run_key'] == 'd6pw'
+    assert row['target'] == ['tests/ui']
+    assert row['dur_s'] == 1840.0
+    assert row['exit'] == 1
+    assert row['counts'] == {'passed': 1, 'failed': 1}
+    assert row['failed'] == ['t::b']
+
+
+def test_a_ledger_row_is_small(tmp_path):
+    """The whole case for tracking this rests on the row staying tiny."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    results = [_r(f'tests/ui/mod{i}.py::test_thing_number_{i}[chromium]', 'passed')
+               for i in range(600)]
+    results.append(_r('tests/ui/mod0.py::test_broken[chromium]', 'failed'))
+    sink.finish(results, _ctx(run_key='d6pw', branch='main', commit='0f912d0'))
+    size = (tmp_path / 'history' / '2026-08.jsonl').stat().st_size
+    assert size < 1024, f'a 601-test run wrote {size} bytes'
+
+
+def test_a_catastrophic_run_does_not_write_an_enormous_line(tmp_path):
+    """The environment is down and 600 tests fail. The count must stay
+    exact, but the list of names cannot be allowed to drown the file."""
+    sink = RunLedgerSink(tmp_path / 'history', max_failures=25)
+    results = [_r(f'tests/ui/mod{i}.py::test_{i}', 'failed') for i in range(600)]
+    sink.finish(results, _ctx(run_key='d6pw'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert row['counts']['failed'] == 600      # exact
+    assert len(row['failed']) == 25            # capped
+    assert row['failed_truncated'] == 575      # and it says so
+
+
+def test_a_run_with_no_truncation_says_nothing_about_it(tmp_path):
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'failed')], _ctx(run_key='d6pw'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert 'failed_truncated' not in row
+
+
+def test_the_ledger_appends_rather_than_overwriting(tmp_path):
+    """Append-only is the whole contract: a row that changes cannot be
+    trusted, and history that overwrites is not history."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed')], _ctx(run_key='r1'))
+    sink.finish([_r('t::a', 'failed')], _ctx(run_key='r2'))
+    lines = (tmp_path / 'history' / '2026-08.jsonl').read_text().splitlines()
+    assert [json.loads(x)['run_key'] for x in lines] == ['r1', 'r2']
+
+
+def test_runs_in_different_months_land_in_different_files(tmp_path):
+    """One file per month keeps concurrent appends from colliding as often,
+    and keeps any one file readable."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([], _ctx(run_key='r1', started=datetime(2026, 8, 31, 23, 0, tzinfo=UTC)))
+    sink.finish([], _ctx(run_key='r2', started=datetime(2026, 9, 1, 1, 0, tzinfo=UTC)))
+    names = sorted(p.name for p in (tmp_path / 'history').iterdir())
+    assert names == ['2026-08.jsonl', '2026-09.jsonl']
+
+
+def test_the_ledger_row_is_one_line_of_valid_json(tmp_path):
+    """A node id with a quote or a backslash must not break the file for
+    every reader that comes after it."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('tests/x.py::test_a["quoted"]', 'failed'),
+                 _r('tests' + chr(92) + 'win.py::test_b', 'failed')],
+                _ctx(run_key='d6pw'))
+    text = (tmp_path / 'history' / '2026-08.jsonl').read_text(encoding='utf-8')
+    assert len(text.strip().splitlines()) == 1
+    assert len(json.loads(text)['failed']) == 2
+
+
+def test_failures_are_sorted_so_two_runs_diff_cleanly(tmp_path):
+    """Collection order shifts between runs; a stable order means a diff
+    shows what actually changed."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::c', 'failed'), _r('t::a', 'failed'), _r('t::b', 'failed')],
+                _ctx(run_key='d6pw'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert row['failed'] == ['t::a', 't::b', 't::c']
+
+
+def test_an_unwritable_history_dir_never_raises(tmp_path):
+    sink = RunLedgerSink(tmp_path / ('hist' + chr(0) + 'bad'))
+    sink.finish([_r('t::a', 'passed')], _ctx(run_key='d6pw'))   # no raise
+    assert sink.error is not None
+    assert 'NOT written' in sink.summary()[0]
+
+
+def test_duration_is_wall_clock_not_the_sum_of_test_times(tmp_path):
+    """Collection, fixtures and teardown are the difference, and on a
+    Playwright suite they are often most of it."""
+    ctx = _ctx(run_key='d6pw')
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed', duration=0.1)], ctx)
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert row['dur_s'] == 1840.0
+
+
+def test_armed_is_decided_by_the_run_key(tmp_path):
+    assert _ctx(run_key='d6pw').armed is True
+    assert _ctx().armed is False

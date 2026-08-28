@@ -12,7 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from soterix_qa_shared.qatouch import reporter as qr
-from soterix_qa_shared.qatouch.results import ResultSink, RunResultsFileSink
+from soterix_qa_shared.qatouch.results import (
+    ResultSink,
+    RunLedgerSink,
+    RunResultsFileSink,
+)
 from soterix_qa_shared.qatouch.upload import QATouchUploadSink
 
 
@@ -52,8 +56,9 @@ class _Recorder(ResultSink):
     def record(self, result):
         self.recorded.append(result)
 
-    def finish(self, results):
+    def finish(self, results, context):
         self.finished = list(results)
+        self.context = context
 
 
 def _reporter(sinks=None):
@@ -135,17 +140,18 @@ def test_an_unarmed_run_still_records_locally(tmp_path):
     qr.pytest_configure(config)
     config.pluginmanager.register.assert_called_once()
     reporter = config.pluginmanager.register.call_args[0][0]
-    assert [type(s) for s in reporter.sinks] == [RunResultsFileSink]
-    assert reporter.sinks[0].run_key is None
+    assert [type(s) for s in reporter.sinks] == [RunResultsFileSink, RunLedgerSink]
+    assert reporter.run_key is None
 
 
 def test_an_armed_run_records_locally_and_uploads(tmp_path):
     config = _config(tmp_path, {'--qatouch-upload': True, '--qatouch-run': 'RUN1'})
     qr.pytest_configure(config)
     reporter = config.pluginmanager.register.call_args[0][0]
-    assert [type(s) for s in reporter.sinks] == [RunResultsFileSink, QATouchUploadSink]
-    assert reporter.sinks[0].run_key == 'RUN1'
-    assert reporter.sinks[1].run_key == 'RUN1'
+    assert [type(s) for s in reporter.sinks] == [
+        RunResultsFileSink, RunLedgerSink, QATouchUploadSink]
+    assert reporter.run_key == 'RUN1'
+    assert reporter.sinks[-1].run_key == 'RUN1'
 
 
 def test_arming_without_a_run_key_uploads_nothing_but_still_records(tmp_path):
@@ -153,13 +159,21 @@ def test_arming_without_a_run_key_uploads_nothing_but_still_records(tmp_path):
     config = _config(tmp_path, {'--qatouch-upload': True})
     qr.pytest_configure(config)
     reporter = config.pluginmanager.register.call_args[0][0]
-    assert [type(s) for s in reporter.sinks] == [RunResultsFileSink]
-    assert reporter.sinks[0].run_key is None
+    assert [type(s) for s in reporter.sinks] == [RunResultsFileSink, RunLedgerSink]
+    assert reporter.run_key is None
 
 
 def test_the_run_record_can_be_switched_off(tmp_path):
-    """With nothing left to do, the plugin does not register at all."""
     config = _config(tmp_path, {'--no-run-record': True})
+    qr.pytest_configure(config)
+    reporter = config.pluginmanager.register.call_args[0][0]
+    assert [type(s) for s in reporter.sinks] == [RunLedgerSink]
+
+
+def test_with_every_sink_switched_off_the_plugin_does_not_register(tmp_path):
+    """No destinations means no hooks: do not pay for a plugin that has
+    nowhere to put anything."""
+    config = _config(tmp_path, {'--no-run-record': True, '--no-history': True})
     qr.pytest_configure(config)
     config.pluginmanager.register.assert_not_called()
 
@@ -384,7 +398,7 @@ class _Broken(ResultSink):
     def record(self, result):
         raise RuntimeError('record blew up')
 
-    def finish(self, results):
+    def finish(self, results, context):
         raise RuntimeError('finish blew up')
 
 
@@ -403,7 +417,7 @@ def test_the_terminal_summary_asks_each_sink_for_its_lines():
     class _Chatty(ResultSink):
         name = 'chatty'
 
-        def finish(self, results):
+        def finish(self, results, context):
             pass
 
         def summary(self):

@@ -23,7 +23,7 @@ private business, not the shape everything else has to live with.
 from __future__ import annotations
 
 import json
-import os
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +74,58 @@ def merge_reruns(existing: RunResult, new: RunResult) -> RunResult:
     return existing
 
 
+@dataclass
+class RunContext:
+    """What a sink needs to know about the SESSION, not about one test.
+
+    A per-test record cannot answer "how long did the suite take" (the sum of
+    test durations is not wall clock), "which branch was this", or "what did
+    the invocation ask for". Any run-level destination - a ledger, a JUnit
+    file, a dashboard feed - needs those, so they are gathered once and
+    handed to every sink rather than each one re-deriving them.
+    """
+
+    started: datetime
+    ended: datetime
+    env: str = 'unknown'
+    target: tuple[str, ...] = ()
+    exitstatus: int | None = None
+    run_key: str | None = None
+    project_key: str | None = None
+    branch: str | None = None
+    commit: str | None = None
+
+    @property
+    def duration_s(self) -> float:
+        return round((self.ended - self.started).total_seconds(), 1)
+
+    @property
+    def armed(self) -> bool:
+        """True when this session was uploading to QA Touch."""
+        return self.run_key is not None
+
+
+def git_info(root: Path | str) -> tuple[str | None, str | None]:
+    """(branch, short commit) for a repo, or (None, None).
+
+    Best effort and never raises: a checkout can be a tarball, a detached
+    head, or have no git at all, and none of those is a reason to fail a
+    test run. Short timeout because a hung git would hold the session open
+    at the one moment a developer is waiting to see results.
+    """
+    def _run(*args: str) -> str | None:
+        try:
+            out = subprocess.run(
+                ['git', *args], cwd=str(root), capture_output=True,
+                text=True, timeout=5, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        value = out.stdout.strip()
+        return value if out.returncode == 0 and value else None
+
+    return _run('rev-parse', '--abbrev-ref', 'HEAD'), _run('rev-parse', '--short', 'HEAD')
+
+
 class ResultSink:
     """Somewhere a run's results can go.
 
@@ -100,8 +152,8 @@ class ResultSink:
     def record(self, result: RunResult) -> None:
         """Called as each test finishes. Default: wait for finish()."""
 
-    def finish(self, results: list[RunResult]) -> None:
-        """Called once at session end with every recorded result."""
+    def finish(self, results: list[RunResult], context: RunContext) -> None:
+        """Called once at session end with every result and the run's facts."""
         raise NotImplementedError
 
     def summary(self) -> list[str]:
@@ -127,23 +179,20 @@ class RunResultsFileSink(ResultSink):
 
     name = 'run results file'
 
-    def __init__(self, path: Path, run_key: str | None = None,
-                 project_key: str | None = None):
+    def __init__(self, path: Path):
         self.path = path
-        self.run_key = run_key
-        self.project_key = project_key
         self.written = 0
         self.error: str | None = None
 
-    def finish(self, results: list[RunResult]) -> None:
+    def finish(self, results: list[RunResult], context: RunContext) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 'timestamp': datetime.now(UTC).isoformat(),
-                'run_key': self.run_key,
-                'project_key': self.project_key,
-                'env': os.environ.get('ENV', 'unknown'),
-                'armed': self.run_key is not None,
+                'run_key': context.run_key,
+                'project_key': context.project_key,
+                'env': context.env,
+                'armed': context.armed,
                 'results': [
                     {
                         'nodeid': r.nodeid,
@@ -164,6 +213,86 @@ class RunResultsFileSink(ResultSink):
         if self.error:
             return [f'  Run record: NOT written ({self.error})']
         return [f'  Run record: {self.written} results -> {self.path}']
+
+
+class RunLedgerSink(ResultSink):
+    """Appends one line per run to a history file that IS tracked in git.
+
+    The reports directory holds 4.4 GB after a week: traces, videos and
+    screenshots, all regenerable by re-running, none of it belonging in a
+    repository. But a run leaves one thing worth keeping - the fact that it
+    happened, when, on which commit, and what failed. That is about 300
+    bytes, and it answers the questions the evidence cannot: when did this
+    test start failing, is the suite getting slower, what did the suite look
+    like before the release.
+
+    **Only armed runs are ledgered.** A run that uploaded to QA Touch is one
+    somebody meant; an exploratory `pytest -k something` is not, and 71 of
+    those in a week would bury the runs that matter. The distinction already
+    exists, so nobody has to remember a flag.
+
+    One file per month keeps concurrent appends apart. When two people do
+    collide, the conflict is two adjacent lines: keep both, in timestamp
+    order. Never rewrite an existing line - the ledger is append-only, and a
+    row that changes is a row that cannot be trusted.
+    """
+
+    name = 'run ledger'
+
+    def __init__(self, directory: Path, max_failures: int = 25):
+        self.directory = directory
+        # A catastrophic run (the environment is down, 600 tests fail) would
+        # otherwise write a 60 KB line and drown the file it lives in. The
+        # count is always exact; only the list of names is capped.
+        self.max_failures = max_failures
+        self.path: Path | None = None
+        self.written = False
+        self.error: str | None = None
+
+    def row(self, results: list[RunResult], context: RunContext) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        failures: list[str] = []
+        for r in results:
+            counts[r.outcome] = counts.get(r.outcome, 0) + 1
+            if r.outcome == 'failed':
+                failures.append(r.nodeid)
+        failures.sort()
+        row = {
+            'at': context.started.isoformat(timespec='seconds'),
+            'env': context.env,
+            'branch': context.branch,
+            'commit': context.commit,
+            'run_key': context.run_key,
+            'project_key': context.project_key,
+            'target': list(context.target),
+            'dur_s': context.duration_s,
+            'exit': context.exitstatus,
+            'counts': counts,
+            'failed': failures[:self.max_failures],
+        }
+        if len(failures) > self.max_failures:
+            row['failed_truncated'] = len(failures) - self.max_failures
+        return row
+
+    def finish(self, results: list[RunResult], context: RunContext) -> None:
+        if not context.armed:
+            return
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            self.path = self.directory / f'{context.started:%Y-%m}.jsonl'
+            line = json.dumps(self.row(results, context), sort_keys=True)
+            with open(self.path, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+            self.written = True
+        except Exception as exc:  # history is nice to have, never worth a run
+            self.error = str(exc)
+
+    def summary(self) -> list[str]:
+        if self.error:
+            return [f'  Run ledger: NOT written ({self.error})']
+        if not self.written:
+            return []
+        return [f'  Run ledger: appended to {self.path}']
 
 
 def collapse_to_cases(results: list[RunResult],

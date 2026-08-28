@@ -8,6 +8,8 @@ compatibility shim.
 - **What must stay true:** [`docs/RULES.md`](docs/RULES.md) — nine rules and
   the compatibility contract. Read it before touching packaging, shims, or
   anything that writes a file.
+- **What a run leaves behind:** [`docs/RUN_HISTORY.md`](docs/RUN_HISTORY.md) —
+  why `reports/` and `logs/` stay out of git and `history/` goes in.
 - **Why a decision was made:** the QA program register (local, in the API
   repo at `docs/local/QA_PROGRAM_REGISTER.md`).
 - **This file:** where the work stands and what comes next.
@@ -29,7 +31,7 @@ not drag in a test runner.
 
 ## Where it stands
 
-**Step 1 complete.** 130 tests, ruff clean, wheel builds and imports in a
+**Step 1 complete.** 143 tests, ruff clean, wheel builds and imports in a
 clean interpreter.
 
 | Module | Lines | What it is |
@@ -38,7 +40,7 @@ clean interpreter.
 | `qatouch.upload` | 522 | The upload sink: case folding, retry, read-back |
 | `qatouch.reporter` | 430 | pytest hooks, node-id records, sink fan-out |
 | `qatouch.retry` | 260 | The failed-upload replay CLI |
-| `qatouch.results` | 221 | `RunResult`, `ResultSink`, the local run record |
+| `qatouch.results` | 348 | `RunResult`, `RunContext`, `ResultSink`, two local sinks |
 | `qatouch.mapping` | 51 | Node-id/case-key helpers |
 | `qatouch.artifacts` | 32 | Frozen shapes of the JSON other tools parse |
 | `qatouch.layout` | 30 | Where a consumer repo keeps its files |
@@ -51,10 +53,11 @@ none), and is QA Touch's word for a test that a Jira filer or dashboard has
 no use for. The reporter records one `RunResult` per node id; folding to
 cases is the upload sink's private step.
 
-**`ResultSink` is the extension point.** A tracked run history, a JUnit
-writer or a dashboard feed plugs in without reopening the reporter. The
-local run record and the QA Touch upload are already two sinks — which is why
-the record is written on every session, armed or not.
+**`ResultSink` is the extension point.** Three sinks today — the local run
+record, the tracked run ledger, and the QA Touch upload. A JUnit writer or a
+dashboard feed plugs in without reopening the reporter. Each sink decides
+when it applies, which is why the record is written on every session and the
+ledger only on armed ones.
 
 ## Next, in order
 
@@ -146,6 +149,11 @@ The canary needs the package, base install only.
 `logs/last_run_results.json` on ordinary local runs. That is the intended fix
 — the flaky history and the run cross-check finally see unarmed runs — but it
 changes what every developer's `pytest` leaves behind.
+
+*Each consumer's `.gitignore` needs `!history/`*, or the ledger is written
+and silently never committed — the worst of both outcomes. Add it in the
+same commit as the pin, and say in the migration note that an armed run now
+produces a file to commit.
 
 **7 — docs.** Both README Quickstarts, the merge runbook's contributor steps,
 and credential setup for every QA team member (or publish to an index they

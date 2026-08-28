@@ -27,4 +27,7 @@ def paths_for(root: Path | str) -> dict[str, Path]:
         'failure_log': logs / 'upload_failures.json',
         'unreplayable_log': logs / 'upload_failures_unreplayable.json',
         'run_results': logs / 'last_run_results.json',
+        # Tracked in git, unlike everything above it. One short line per
+        # armed run; see results.RunLedgerSink for why only armed runs.
+        'history': root / 'history',
     }

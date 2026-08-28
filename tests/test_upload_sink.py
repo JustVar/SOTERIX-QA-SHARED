@@ -114,7 +114,7 @@ def test_a_case_for_another_project_is_skipped_loudly(monkeypatch, tmp_path, cap
     _fake_client(monkeypatch)
     s = _sink(tmp_path)
     with caplog.at_level(logging.ERROR, logger='qatouch_reporter'):
-        s.finish([_r('t::a', 'passed', case_key='C1', project_key='60W5')])
+        s.finish([_r('t::a', 'passed', case_key='C1', project_key='60W5')], None)
     assert 'no per-project run key' in caplog.text
     assert s.stats['errors'] == 1
     assert s.stats['uploaded'] == 0
@@ -172,7 +172,7 @@ def test_unresolvable_codes_fail_loud_and_land_in_the_retry_log(monkeypatch, tmp
 
     s = _sink(tmp_path)
     s.finish([_r('t::a', 'passed', case_key='B869bm'),
-              _r('t::b', 'failed', case_key='8V1vw1')])
+              _r('t::b', 'failed', case_key='8V1vw1')], None)
 
     # Nothing sent in a form the API would ignore, and nothing "succeeded".
     fake_client.update_test_run_results_by_code.assert_not_called()
@@ -193,7 +193,7 @@ def test_uploads_normally_when_codes_resolve(monkeypatch, tmp_path):
         'checked': 1, 'landed': ['TR0262'], 'mismatched': [], 'missing': []}
 
     s = _sink(tmp_path)
-    s.finish([_r('t::a', 'passed', case_key='B869bm')])
+    s.finish([_r('t::a', 'passed', case_key='B869bm')], None)
 
     fake_client.update_test_run_results_by_code.assert_called_once()
     sent = fake_client.update_test_run_results_by_code.call_args.kwargs['results']
@@ -207,7 +207,7 @@ def test_a_run_with_no_mapped_results_uploads_nothing(monkeypatch, tmp_path):
     """An unmapped-only run must not reach the client at all."""
     fake_client = _fake_client(monkeypatch)
     s = _sink(tmp_path)
-    s.finish([_r('t::a', 'failed')])
+    s.finish([_r('t::a', 'failed')], None)
     fake_client.update_test_run_results_by_code.assert_not_called()
     assert s.stats['errors'] == 0
 
@@ -230,7 +230,7 @@ def test_attaches_screenshot_and_timing(monkeypatch, tmp_path):
     """A failed case uploads with its screenshot named by code and a timing line."""
     s, fake_client = _playwright_sink(monkeypatch, tmp_path)
     s.finish([_r('t::a', 'failed', case_key='B869bm', duration=1.23,
-                 screenshot=b'\x89PNG-bytes')])
+                 screenshot=b'\x89PNG-bytes')], None)
 
     fake_client.update_test_run_results_by_code.assert_called_once()
     kwargs = fake_client.update_test_run_results_by_code.call_args.kwargs
@@ -247,7 +247,7 @@ def test_skips_an_oversized_screenshot_whole(monkeypatch, tmp_path, caplog):
     s, fake_client = _playwright_sink(monkeypatch, tmp_path)
     with caplog.at_level(logging.WARNING, logger='qatouch_reporter'):
         s.finish([_r('t::a', 'failed', case_key='B869bm',
-                     screenshot=b'x' * (up.MAX_ATTACHMENT_BYTES + 1))])
+                     screenshot=b'x' * (up.MAX_ATTACHMENT_BYTES + 1))], None)
 
     assert 'over the 2 MB attachment cap' in caplog.text
     fake_client.update_test_run_results_by_code.assert_called_once()
@@ -261,7 +261,7 @@ def test_without_screenshots_the_request_is_byte_compatible(monkeypatch, tmp_pat
     """Timing rides only with attachments, so a run with durations but no
     screenshots produces the same request as before the feature."""
     s, fake_client = _playwright_sink(monkeypatch, tmp_path)
-    s.finish([_r('t::a', 'passed', case_key='B869bm', duration=0.45)])
+    s.finish([_r('t::a', 'passed', case_key='B869bm', duration=0.45)], None)
 
     fake_client.update_test_run_results_by_code.assert_called_once()
     kwargs = fake_client.update_test_run_results_by_code.call_args.kwargs
@@ -282,7 +282,7 @@ def test_a_rejected_multipart_degrades_to_the_plain_request(monkeypatch, tmp_pat
         return {'success': True}
 
     fake_client.update_test_run_results_by_code.side_effect = fake_update
-    s.finish([_r('t::a', 'failed', case_key='B869bm', screenshot=b'\x89PNG-bytes')])
+    s.finish([_r('t::a', 'failed', case_key='B869bm', screenshot=b'\x89PNG-bytes')], None)
 
     assert len(calls) == 2
     assert calls[0].get('attachments')
@@ -320,7 +320,7 @@ def test_timing_lines_cover_only_the_attached_cases(monkeypatch, tmp_path):
     s = _sink(tmp_path, use_playwright_endpoint=True)
     s.finish([_r('t::a', 'failed', case_key='B869bm', duration=1.23,
                  screenshot=b'\x89PNG-bytes'),
-              _r('t::b', 'passed', case_key='8V1vw1', duration=0.45)])
+              _r('t::b', 'passed', case_key='8V1vw1', duration=0.45)], None)
 
     kwargs = fake_client.update_test_run_results_by_code.call_args.kwargs
     assert 'TR0262 execution: 1.2s' in kwargs['comments']
@@ -347,7 +347,7 @@ def test_accepted_but_ignored_multipart_degrades_to_plain(monkeypatch, tmp_path)
          'mismatched': ['TR0262: sent Failed, run shows Untested'], 'missing': []},
         {'checked': 1, 'landed': ['TR0262'], 'mismatched': [], 'missing': []},
     ]
-    s.finish([_r('t::a', 'failed', case_key='B869bm', screenshot=b'\x89PNG-bytes')])
+    s.finish([_r('t::a', 'failed', case_key='B869bm', screenshot=b'\x89PNG-bytes')], None)
 
     assert len(calls) == 2
     assert calls[0].get('attachments')
@@ -365,7 +365,7 @@ def test_a_plain_verify_failure_saves_for_retry_without_respinning(monkeypatch, 
     fake_client.verify_results_landed.return_value = {
         'checked': 1, 'landed': [],
         'mismatched': ['TR0262: sent Passed, run shows Untested'], 'missing': []}
-    s.finish([_r('t::a', 'passed', case_key='B869bm')])   # no screenshot
+    s.finish([_r('t::a', 'passed', case_key='B869bm')], None)   # no screenshot
 
     fake_client.update_test_run_results_by_code.assert_called_once()
     assert s.stats['errors'] == 1

@@ -28,7 +28,12 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from soterix_qa_shared.qatouch.results import ResultSink, RunResult, collapse_to_cases
+from soterix_qa_shared.qatouch.results import (
+    ResultSink,
+    RunContext,
+    RunResult,
+    collapse_to_cases,
+)
 
 log = logging.getLogger('qatouch_reporter')
 
@@ -337,7 +342,9 @@ class QATouchUploadSink(ResultSink):
 
     # -- the sink interface -------------------------------------------------
 
-    def finish(self, results: list[RunResult]) -> None:
+    def finish(self, results: list[RunResult], context: RunContext | None = None) -> None:
+        # `context` is unused here: this sink was given its run key at
+        # construction, because it needs one to exist at all.
         folded = collapse_to_cases(results, PYTEST_TO_QT)
         self.statuses = folded['statuses']
         self.durations = folded['durations']

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,11 @@ from soterix_qa_shared.qatouch.layout import paths_for
 from soterix_qa_shared.qatouch.mapping import base_keyed
 from soterix_qa_shared.qatouch.results import (
     ResultSink,
+    RunContext,
+    RunLedgerSink,
     RunResult,
     RunResultsFileSink,
+    git_info,
     merge_reruns,
     worse_outcome,
 )
@@ -106,6 +110,8 @@ MAPPING_PATH: Path | None = None
 FAILURE_LOG_DIR: Path | None = None
 FAILURE_LOG_PATH: Path | None = None
 RUN_RESULTS_PATH: Path | None = None
+# Tracked in git, unlike the paths above it.
+HISTORY_DIR: Path | None = None
 
 # policy(path: Path) -> (mapping, counts). Set by the consumer's shim before
 # the module alias is installed. See the module docstring.
@@ -119,13 +125,15 @@ def configure(root: Path | str) -> None:
     that resolves the repo root itself. Safe to call more than once; the
     last call wins.
     """
-    global ROOT, MAPPING_PATH, FAILURE_LOG_DIR, FAILURE_LOG_PATH, RUN_RESULTS_PATH
+    global ROOT, MAPPING_PATH, FAILURE_LOG_DIR, FAILURE_LOG_PATH
+    global RUN_RESULTS_PATH, HISTORY_DIR
     paths = paths_for(root)
     ROOT = paths['root']
     MAPPING_PATH = paths['mapping']
     FAILURE_LOG_DIR = paths['logs']
     FAILURE_LOG_PATH = paths['failure_log']
     RUN_RESULTS_PATH = paths['run_results']
+    HISTORY_DIR = paths['history']
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -147,6 +155,12 @@ def pytest_addoption(parser: Any) -> None:
         default=False,
         help='Skip writing logs/last_run_results.json for this session.',
     )
+    group.addoption(
+        '--no-history',
+        action='store_true',
+        default=False,
+        help='Skip appending this run to the tracked history ledger.',
+    )
 
 
 def _tests(n: int) -> str:
@@ -155,6 +169,21 @@ def _tests(n: int) -> str:
 
 def _env_flag(name: str, default: str = '') -> bool:
     return os.environ.get(name, default).lower() in ('1', 'true', 'yes')
+
+
+def _armed_run_key(config: Any) -> str | None:
+    """The run key of an ARMED session, or None.
+
+    Arming needs both the flag and a run key: the uploader refuses to
+    register without one, so a flag alone is not an armed run. The ledger
+    keys off the same answer, which is what keeps "only armed runs are
+    ledgered" from drifting away from what actually uploaded.
+    """
+    upload = (config.getoption('--qatouch-upload', default=False)
+              or _env_flag('QATOUCH_UPLOAD'))
+    run_key = (config.getoption('--qatouch-run', default=None)
+               or os.environ.get('QATOUCH_RUN_KEY'))
+    return run_key if (upload and run_key) else None
 
 
 def _build_sinks(config: Any) -> list[ResultSink]:
@@ -191,11 +220,11 @@ def _build_sinks(config: Any) -> list[ResultSink]:
         )
 
     if not config.getoption('--no-run-record', default=False):
-        sinks.append(RunResultsFileSink(
-            path=RUN_RESULTS_PATH,
-            run_key=run_key if upload_sink else None,
-            project_key=project_key,
-        ))
+        sinks.append(RunResultsFileSink(path=RUN_RESULTS_PATH))
+    # Registered on every run; it writes only on armed ones. Keeping that
+    # rule inside the sink means it is stated once, beside the reason.
+    if not config.getoption('--no-history', default=False):
+        sinks.append(RunLedgerSink(directory=HISTORY_DIR))
     if upload_sink:
         sinks.append(upload_sink)
     return sinks
@@ -217,7 +246,12 @@ def pytest_configure(config: Any) -> None:
         sinks = _build_sinks(config)
         if not sinks:
             return
-        reporter = QATouchReporter(sinks)
+        reporter = QATouchReporter(
+            sinks,
+            run_key=_armed_run_key(config),
+            project_key=os.environ.get('QATOUCH_PROJECT_ID', DEFAULT_PROJECT_KEY),
+            target=tuple(getattr(config, 'args', ()) or ()),
+        )
     except Exception as exc:
         print(f'QA Touch: the reporter could not start ({exc}). '
               f'No results will be recorded for this session.')
@@ -230,9 +264,15 @@ def pytest_configure(config: Any) -> None:
 class QATouchReporter:
     """Collects one result per node id and fans them out to the sinks."""
 
-    def __init__(self, sinks: list[ResultSink]):
+    def __init__(self, sinks: list[ResultSink], run_key: str | None = None,
+                 project_key: str | None = None, target: tuple[str, ...] = ()):
         self.sinks = sinks
         self.records: dict[str, RunResult] = {}
+        # Wall clock, not the sum of test durations: collection, fixtures and
+        # teardown are the difference, and they are often most of it.
+        self.started = datetime.now(UTC)
+        self.run_key = run_key
+        self.target = target
         # Whether anything this session does depends on resolving case keys.
         # It changes what a missing mapping policy costs, and therefore how
         # loudly it should be said.
@@ -242,7 +282,7 @@ class QATouchReporter:
         # stored keys carry [chromium], so a run under another browser (or an
         # Appium suite with no bracket) matches nothing without this.
         self.mapping_by_base = self._base_index(self.mapping)
-        self.default_project_key = os.environ.get(
+        self.default_project_key = project_key or os.environ.get(
             'QATOUCH_PROJECT_ID', DEFAULT_PROJECT_KEY)
         self.capture_screenshots = any(
             getattr(s, 'wants_screenshots', False) for s in self.sinks)
@@ -405,11 +445,31 @@ class QATouchReporter:
             except Exception as e:  # one sink must not cost the others
                 log.warning(f'QA Touch: sink "{sink.name}" failed on record: {e}')
 
+    def run_context(self, exitstatus: int | None = None) -> RunContext:
+        branch, commit = git_info(ROOT) if ROOT else (None, None)
+        return RunContext(
+            started=self.started,
+            ended=datetime.now(UTC),
+            env=os.environ.get('ENV', 'unknown'),
+            target=self.target,
+            exitstatus=exitstatus,
+            run_key=self.run_key,
+            project_key=self.default_project_key,
+            branch=branch,
+            commit=commit,
+        )
+
     def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
         results = list(self.records.values())
+        try:
+            context = self.run_context(exitstatus)
+        except Exception as e:  # never let provenance cost a run its results
+            log.warning(f'QA Touch: could not build the run context: {e}')
+            context = RunContext(started=self.started, ended=self.started,
+                                 run_key=self.run_key)
         for sink in self.sinks:
             try:
-                sink.finish(results)
+                sink.finish(results, context)
             except Exception as e:  # one sink must not cost the others
                 log.error(f'QA Touch: sink "{sink.name}" failed at session end: {e}')
 

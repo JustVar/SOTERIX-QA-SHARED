@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,11 @@ if str(REPO_ROOT) not in sys.path:
 from soterix_qa_shared.qatouch import client as pkg_client
 from soterix_qa_shared.qatouch import reporter as pkg_reporter
 from soterix_qa_shared.qatouch import retry as pkg_retry
-from soterix_qa_shared.qatouch.results import RunResult, RunResultsFileSink
+from soterix_qa_shared.qatouch.results import (
+    RunContext,
+    RunResult,
+    RunResultsFileSink,
+)
 from soterix_qa_shared.qatouch.upload import QATouchUploadSink
 
 from plugins import qatouch_reporter as shim_reporter
@@ -93,8 +98,10 @@ def test_patching_the_old_path_moves_the_run_record(monkeypatch, tmp_path):
     target = tmp_path / 'last_run_results.json'
     monkeypatch.setattr(shim_reporter, 'RUN_RESULTS_PATH', target)
 
-    sink = RunResultsFileSink(shim_reporter.RUN_RESULTS_PATH, run_key='rk-shim-guard')
-    sink.finish([RunResult(nodeid='tests/x.py::test_y', outcome='passed')])
+    now = datetime.now(UTC)
+    sink = RunResultsFileSink(shim_reporter.RUN_RESULTS_PATH)
+    sink.finish([RunResult(nodeid='tests/x.py::test_y', outcome='passed')],
+                RunContext(started=now, ended=now, run_key='rk-shim-guard'))
 
     assert target.exists(), (
         'patching the old import path did not reach the writer - the shim is '
@@ -117,6 +124,7 @@ def test_patching_the_old_path_moves_the_failure_log(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('name', [
     'MAPPING_PATH', 'FAILURE_LOG_DIR', 'FAILURE_LOG_PATH', 'RUN_RESULTS_PATH',
+    'HISTORY_DIR',
 ])
 def test_writer_paths_resolve_inside_this_repo(name):
     value = getattr(pkg_reporter, name)
