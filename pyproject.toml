@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soterix-qa-shared"
-version = "0.2.0"
-description = "Shared QA pipeline for the Soterix QA repos: QA Touch client and pytest result reporter."
+version = "0.3.0"
+description = "Shared QA pipeline for the Soterix QA repos: QA Touch client, and a pytest result reporter that records per test and fans out to result sinks."
 requires-python = ">=3.11"
 # Base install is client-only on purpose: the UI canary job and any future
 # script consumer must not drag pytest in. The reporter extra adds it.

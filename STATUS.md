@@ -42,7 +42,30 @@ under-specified, this document says so rather than implying it is planned.
   `ModuleNotFoundError(name='pytest')`, so a shim that skipped the check
   would report "the package is not installed" when the package is fine and
   the extra is missing.
+- **The sink split (step 1b, S5).** The reporter records one `RunResult` per
+  NODE ID and hands the list to every registered `ResultSink`. Folding to QA
+  Touch case keys is the upload sink's private step. Three consequences,
+  each with a test:
+  - Two tests sharing a case key are both recorded, and the worse status
+    wins. Keyed by case key, whichever ran last won - so a passing test
+    could overwrite a real failure, silently, on any of the 42 case keys the
+    UI mapping has claimed by more than one node id.
+  - The evidence travels with the outcome it belongs to. The old code took
+    the LAST duration on a rerun, so a case could upload "failed" beside the
+    passing rerun's timing.
+  - The local run record is written on EVERY session. It used to need an
+    armed upload to exist at all, which is the A2 finding above.
+  Modules: `results` (the record and the interface), `upload` (the QA Touch
+  sink), `reporter` (hooks and fan-out). 106 tests; seven seeded defects,
+  seven caught after the first round found a hole - see below.
 - Dev toolchain pinned exactly (see `pyproject.toml`).
+- **Verified in a live pytest session, not only in unit tests.** A throwaway
+  repo with the step-4 shim shape (plain alias plus `MAPPING_POLICY`
+  injected before the swap) ran against the built wheel: the reviewed gate
+  held (an unreviewed row resolved to no case), the run record was written
+  unarmed, `--no-run-record` suppressed it, and `test_param[firefox]`
+  resolved to a case stored under `[chromium]` - S4 working in a real
+  session rather than a unit fixture.
 
 ## Rules (each proven by prototype; violate one and the migration breaks quietly)
 
@@ -260,7 +283,7 @@ red. Do **not** tag yet.
 1. **Reporter** — split into a move and a designed change, so a regression
    points at one of them rather than both.
    - **1a (done)** the behaviour-preserving port, above.
-   - **1b (next, carries S5)** re-key the reporter from `case_key` to node id
+   - **1b (DONE)** re-key the reporter from `case_key` to node id
      behind a `ResultSink` interface. Today `results`, `durations`,
      `screenshots` and `case_projects` are all keyed by `case_key`, so two
      tests sharing a key collide (measured: UI 42 keys claimed by more than
@@ -275,6 +298,16 @@ red. Do **not** tag yet.
    - Remaining in step 1: `retry_uploads` (needs the GUARDED shim form, see
      Rule 2's correction) and the one live upload that verifies the two
      API-repo behaviours unification fixes.
+   - **New, from the sink split:** the run record grew an `armed` field and
+     `--no-run-record`. Both consumer repos gain a file they did not have on
+     unarmed runs, so the UI's `run_suite` flaky history and `validate_run`
+     cross-check start seeing ordinary runs. That is the intended fix, but
+     it IS a behaviour change for every developer's local `pytest`; say so
+     in the step 6 migration note rather than letting people find a new file
+     in `logs/`.
+   - **Also new:** `ResultSink` is the extension point S8 (tracked run
+     history) and any future JUnit or dashboard writer plugs into. Neither
+     needs the reporter reopened.
 
    Original scope note — `soterix_qa_shared.qatouch.reporter`, base = UI
    `plugins/qatouch_reporter.py` (a strict superset of the API copy).

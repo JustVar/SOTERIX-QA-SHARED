@@ -18,3 +18,5 @@ exclude = ["docs/shim_guard_template.py"]
 # reporting degrades and says so, and the test run survives. Blind-except is
 # the correct shape for this module, not a lapse.
 "src/soterix_qa_shared/qatouch/reporter.py" = ["BLE001"]
+"src/soterix_qa_shared/qatouch/results.py" = ["BLE001"]
+"src/soterix_qa_shared/qatouch/upload.py" = ["BLE001"]
