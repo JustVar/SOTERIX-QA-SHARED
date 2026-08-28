@@ -58,6 +58,18 @@ under-specified, this document says so rather than implying it is planned.
   Modules: `results` (the record and the interface), `upload` (the QA Touch
   sink), `reporter` (hooks and fan-out). 106 tests; seven seeded defects,
   seven caught after the first round found a hole - see below.
+- **`soterix_qa_shared.qatouch.retry`** — the failed-upload replay CLI, with
+  `layout.py` so the reporter and the retry CLI cannot derive the failure
+  log's path differently. 24 tests.
+- **The shim guard template, rewritten and actually executed.** It had been
+  authored against the rehearsal's shape and referenced three things that do
+  not exist (`QATouchReporter('runkey')`, `nodeid_outcomes`,
+  `run_results_path()`), so copying it into a consumer would have produced a
+  guard that fails for the wrong reason. It now runs green against a real
+  shimmed repo, and three deliberate breakages each fail it: a star-import
+  shim (4 tests), a plain alias on the CLI module (1), and a shim that
+  forgets to inject the policy (1). The consumer repo's own suite does not
+  move under any of them, which is the whole reason the guard exists.
 - Dev toolchain pinned exactly (see `pyproject.toml`).
 - **Verified in a live pytest session, not only in unit tests.** A throwaway
   repo with the step-4 shim shape (plain alias plus `MAPPING_POLICY`
@@ -295,9 +307,15 @@ red. Do **not** tag yet.
      while the QA Touch sink still waits to be armed. Do it now — after
      step 4 freezes the shape behind shims and a version tag it costs
      roughly three times as much.
-   - Remaining in step 1: `retry_uploads` (needs the GUARDED shim form, see
-     Rule 2's correction) and the one live upload that verifies the two
-     API-repo behaviours unification fixes.
+   - **1c (DONE)** `retry_uploads`, and the guarded shim form it forced.
+     **The plain form was measured, not argued:** run through a plain alias
+     shim, `python tools/retry_uploads.py --dry-run` printed NOTHING and
+     exited 0, with a real pending failure sitting in the log. A reader sees
+     "no output, success" and concludes there is nothing to retry. The
+     guarded form runs the CLI correctly.
+   - Remaining in step 1: the one live upload that verifies the two
+     API-repo behaviours unification fixes. It needs a real QA Touch run,
+     so it belongs with step 5b rather than here.
    - **New, from the sink split:** the run record grew an `armed` field and
      `--no-run-record`. Both consumer repos gain a file they did not have on
      unarmed runs, so the UI's `run_suite` flaky history and `validate_run`

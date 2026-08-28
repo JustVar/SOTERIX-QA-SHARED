@@ -44,6 +44,7 @@ from typing import Any
 
 import pytest
 
+from soterix_qa_shared.qatouch.layout import paths_for
 from soterix_qa_shared.qatouch.mapping import base_keyed
 from soterix_qa_shared.qatouch.results import (
     ResultSink,
@@ -119,11 +120,12 @@ def configure(root: Path | str) -> None:
     last call wins.
     """
     global ROOT, MAPPING_PATH, FAILURE_LOG_DIR, FAILURE_LOG_PATH, RUN_RESULTS_PATH
-    ROOT = Path(root)
-    MAPPING_PATH = ROOT / 'config' / 'qatouch_case_mapping.json'
-    FAILURE_LOG_DIR = ROOT / 'logs'
-    FAILURE_LOG_PATH = FAILURE_LOG_DIR / 'upload_failures.json'
-    RUN_RESULTS_PATH = FAILURE_LOG_DIR / 'last_run_results.json'
+    paths = paths_for(root)
+    ROOT = paths['root']
+    MAPPING_PATH = paths['mapping']
+    FAILURE_LOG_DIR = paths['logs']
+    FAILURE_LOG_PATH = paths['failure_log']
+    RUN_RESULTS_PATH = paths['run_results']
 
 
 def pytest_addoption(parser: Any) -> None:

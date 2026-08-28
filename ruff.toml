@@ -1,22 +1,32 @@
 # Ruff settings for soterix-qa-shared.
 # Run: python -m ruff check .
-# No rules are selected here, so ruff's defaults apply. Only the
-# exceptions below are local to this package.
+# No rules are selected here, so this ruff version's defaults apply - which
+# is a broad set (415 rules on 0.16.x), not the four groups the docs imply.
+# The dev extra pins the version, because a floating pin makes a lint
+# verdict depend on when a machine last installed.
 
 # Templates that consuming repos copy. Their imports resolve in the
 # consumer, not here, so linting them in this repo is meaningless.
 exclude = ["docs/shim_guard_template.py"]
 
 [lint.per-file-ignores]
-# The QA Touch client reports every failure to its caller and keeps going.
+# Blind-except is the correct shape for this whole pipeline, not a lapse.
+#
+#   * The client reports every failure to its caller and keeps going.
+#   * The reporter runs inside pytest hooks. An exception escaping
+#     pytest_configure or a session hook aborts the whole run with
+#     INTERNALERROR - seen for real when a Windows 8.3-vs-long path made
+#     rootdir fall back to C:\Users and the writer raised PermissionError.
+#   * A sink must not take the run's other sinks down with it.
+#   * The retry CLI must not abandon the remaining entries because one
+#     run was unreachable.
+#
+# In every case the failure is reported and the work degrades. Narrowing
+# these to specific exception types would mean guessing which ones a
+# third-party API client can raise, and being wrong would restore exactly
+# the crash each guard exists to prevent.
 "src/soterix_qa_shared/qatouch/client.py" = ["BLE001"]
-
-# The reporter runs inside pytest hooks. An exception escaping pytest_configure
-# or a session hook aborts the whole run with INTERNALERROR - seen for real
-# when a Windows 8.3-vs-long path made rootdir fall back to C:\Users and the
-# writer raised PermissionError. Every broad catch here is that guard: the
-# reporting degrades and says so, and the test run survives. Blind-except is
-# the correct shape for this module, not a lapse.
 "src/soterix_qa_shared/qatouch/reporter.py" = ["BLE001"]
 "src/soterix_qa_shared/qatouch/results.py" = ["BLE001"]
+"src/soterix_qa_shared/qatouch/retry.py" = ["BLE001"]
 "src/soterix_qa_shared/qatouch/upload.py" = ["BLE001"]
