@@ -7,14 +7,16 @@ name = "soterix-qa-core"
 version = "0.1.0"
 description = "Shared QA pipeline for the Soterix QA repos: QA Touch client and reporter, Jira layer."
 requires-python = ">=3.11"
+# Base install is client-only on purpose: the UI canary job and any future
+# script consumer must not drag pytest in. The reporter extra adds it.
 dependencies = [
     "requests",
-    "pytest",
 ]
 
 [project.optional-dependencies]
+reporter = ["pytest"]
 jira = ["jira>=3.10"]
-dev = ["ruff>=0.15", "pytest-html"]
+dev = ["pytest", "ruff>=0.15", "pytest-html"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
