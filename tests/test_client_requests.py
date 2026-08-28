@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from soterix_qa_core.qatouch import QATouchClient, QATouchError, case_code_to_ref
+from soterix_qa_shared.qatouch import QATouchClient, QATouchError, case_code_to_ref
 
 
 class _Response:

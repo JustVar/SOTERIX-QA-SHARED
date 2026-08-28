@@ -2,7 +2,7 @@
 
 These pin the pure functions the reporter and tools depend on. No network.
 """
-from soterix_qa_core.qatouch import (
+from soterix_qa_shared.qatouch import (
     PYTEST_TO_QATOUCH,
     STATUS_NAMES,
     QATouchClient,

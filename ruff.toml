@@ -1,4 +1,4 @@
-# Ruff settings for soterix-qa-core.
+# Ruff settings for soterix-qa-shared.
 # Run: python -m ruff check .
 # No rules are selected here, so ruff's defaults apply. Only the
 # exceptions below are local to this package.
@@ -9,4 +9,12 @@ exclude = ["docs/shim_guard_template.py"]
 
 [lint.per-file-ignores]
 # The QA Touch client reports every failure to its caller and keeps going.
-"src/soterix_qa_core/qatouch/client.py" = ["BLE001"]
+"src/soterix_qa_shared/qatouch/client.py" = ["BLE001"]
+
+# The reporter runs inside pytest hooks. An exception escaping pytest_configure
+# or a session hook aborts the whole run with INTERNALERROR - seen for real
+# when a Windows 8.3-vs-long path made rootdir fall back to C:\Users and the
+# writer raised PermissionError. Every broad catch here is that guard: the
+# reporting degrades and says so, and the test run survives. Blind-except is
+# the correct shape for this module, not a lapse.
+"src/soterix_qa_shared/qatouch/reporter.py" = ["BLE001"]

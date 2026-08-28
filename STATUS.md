@@ -1,4 +1,11 @@
-# soterix-qa-core — build status
+# soterix-qa-shared — build status
+
+**Renamed 2026-08-28** from `SOTERIX-QA-CORE` (repo, distribution and import
+path all moved together, while nothing imported the package yet — after
+steps 5 and 6 land shims and version pins, a rename costs far more). "Core"
+read too close to **NexaiQ-Core**, which is a product/Jira project, not a
+library. GitHub redirects the old URLs, so a stale remote keeps working in
+silence; check `git remote -v` rather than trusting that a push succeeded.
 
 Shared QA pipeline for the Soterix QA repos (Foundations plan step 1). Ends
 the divergence of the duplicated QA Touch tooling: one installable package
@@ -14,13 +21,28 @@ under-specified, this document says so rather than implying it is planned.
 
 - Package scaffold: src layout, `pyproject.toml` (setuptools; base install is
   client-only, with `reporter`, `jira` and `dev` extras). Wheel build verified.
-- **`soterix_qa_core.qatouch.client`** — the unified QA Touch client. Base is
+- **`soterix_qa_shared.qatouch.client`** — the unified QA Touch client. Base is
   the UI implementation (the superset and the corrected one: its
   `create_project`/`create_module` use the endpoints that exist, and it
   carries `update_test_run_results_by_code`, `verify_results_landed`,
   `update_test_case`, the legacy-field aliases and all eight status codes).
   The API repo's `create_test_case_with_steps` is folded in. Ruff clean.
 - Offline unit tests for the client helpers (`tests/test_client_helpers.py`).
+- **`soterix_qa_shared.qatouch.reporter`** — the pytest result reporter
+  (step 1a, behaviour-preserving). Rules 5-8 applied: paths derive from
+  `configure(root)`, the mapping policy is injected, every hook write is
+  guarded. `mapping.py` carries the pure parametrization-collapsing helpers;
+  `artifacts.py` freezes the two JSON shapes that tools outside this package
+  parse. 43 tests, ported from the UI repo's reporter suite and
+  mutation-checked (5 seeded defects, 5 caught). Ruff clean.
+- Wheel verified end to end: built, installed into a clean interpreter, every
+  module imported. **Rule 2's `exc.name` check now has a reproduced instance**
+  rather than an argued one — under a base install
+  `import soterix_qa_shared.qatouch.reporter` raises
+  `ModuleNotFoundError(name='pytest')`, so a shim that skipped the check
+  would report "the package is not installed" when the package is fine and
+  the extra is missing.
+- Dev toolchain pinned exactly (see `pyproject.toml`).
 
 ## Rules (each proven by prototype; violate one and the migration breaks quietly)
 
@@ -36,10 +58,14 @@ under-specified, this document says so rather than implying it is planned.
    modules with a real CLI need the guard *before* the alias swap. Modules
    without a `main()` must NOT use the guarded form: it raises
    `AttributeError` on `python -m`.
-   - **Guarded form** — only for a module with a real CLI. No module in the
-     scope of steps 1-6 needs it: `run_report` qualifies but is deferred to
-     2b, so the guarded form first applies when 2b (or a moving `tools/*`
-     module with a `__main__` guard) lands.
+   - **Guarded form** — only for a module with a real CLI. **Corrected
+     2026-08-28:** an earlier round claimed no module in steps 1-6 needed
+     this. `tools/retry_uploads.py` does, and it is in step 1 — it has a
+     `main()`, a `__main__` guard, and a documented
+     `python tools/retry_uploads.py` invocation. A plain alias shim swaps
+     `sys.modules['__main__']` and exits 0 having run nothing, the same
+     silent no-op the `python -m` case produces. `run_report` also qualifies
+     but stays deferred to 2b.
    - **Plain form** — everything else (`products`, `paths`, `branding`,
      `qatouch_client`, `qatouch_reporter`): same template minus the two guard
      lines.
@@ -51,13 +77,13 @@ under-specified, this document says so rather than implying it is planned.
    ```python
    import sys
    try:
-       from soterix_qa_core.qatouch import reporter as _mod
+       from soterix_qa_shared.qatouch import reporter as _mod
    except ModuleNotFoundError as exc:
-       if (exc.name or "").split(".")[0] != "soterix_qa_core":
+       if (exc.name or "").split(".")[0] != "soterix_qa_shared":
            raise                    # a dependency of the package is missing
        raise ModuleNotFoundError(
-           "soterix-qa-core is not installed. "
-           "Run: pip install -e ../soterix-qa-core"
+           "soterix-qa-shared is not installed. "
+           "Run: pip install -e ../soterix-qa-shared"
        ) from None
    if __name__ == "__main__":       # guarded form only
        sys.exit(_mod.main())
@@ -67,8 +93,8 @@ under-specified, this document says so rather than implying it is planned.
    The `exc.name` check is load-bearing: without it, a missing dependency
    *of the package* is misreported as "the package is not installed", and
    step 2 deliberately puts Playwright rendering behind its own module. Keep
-   the `from soterix_qa_core.qatouch import reporter as _mod` form: the
-   dotted `import soterix_qa_core.qatouch.reporter` form makes a partial
+   the `from soterix_qa_shared.qatouch import reporter as _mod` form: the
+   dotted `import soterix_qa_shared.qatouch.reporter` form makes a partial
    install (package present, submodule missing) misreport as "not
    installed", while this form raises a truthful ImportError instead.
 
@@ -107,9 +133,17 @@ under-specified, this document says so rather than implying it is planned.
    resolve themselves. Exported names become **functions, not constants**, so
    `run.py` and `health_summary.py` stop importing frozen values. Two details
    the rehearsal had to invent, so state them: `configure(root)` is called at
-   the TOP of `pytest_configure`, before the arming check — the writer paths
-   must be correct even for an unarmed run, since `last_run_results.json` is
-   written every session. And `--rootdir` silently relocates every derived
+   the TOP of `pytest_configure`, before the arming check, so a later hook or
+   a CLI sharing the module sees correct paths on any run. **Corrected
+   2026-08-28:** the reason first given for this — "`last_run_results.json`
+   is written every session" — is false. `pytest_configure` returns before
+   constructing the reporter on an unarmed run, so nothing writes that file
+   unless upload is armed. The placement is still right, but cheap insurance
+   rather than a fix for a live bug. The real consequence of the measured
+   behaviour is separate and open: `run_suite`'s flaky history and
+   `validate_run`'s cross-check silently get nothing from an unarmed run.
+   Splitting the local record from the upload (S5) fixes that; see step 1b.
+   And `--rootdir` silently relocates every derived
    path, so the shim guard asserts the writer paths sit inside the repo.
 
 6. **Read module globals at call time.** The path values stay monkeypatchable
@@ -203,14 +237,46 @@ CI: collect gate, **a ruff lint job** (the copied ruff.toml is inert without
 one), the tag-equals-version guard (Rule 4), the wheel-install import job
 (Rule 9, which now has a real instance to catch: `py.typed`), and a
 per-interpreter shim-identity matrix. **Decide the interpreter range here**,
-not in step 7 — it is the input to that matrix (`pyproject` says >=3.11, the
-API gate runs 3.12, UI dev runs 3.14). **Provision
+not in step 7 — it is the input to that matrix. Measured 2026-08-28: both
+repos' venvs run 3.14.6, the UI's workflows pin 3.14, the API's collect gate
+pins 3.12, and `pyproject` claims `>=3.11`. The package's real floor is 3.11
+(`datetime.UTC`), but **only 3.14 is exercised**, so `>=3.11` is an
+unverified claim today. Either run the matrix on 3.11/3.12/3.14 or narrow
+the range to what CI actually covers — the matrix is preferable, because the
+API gate already runs an interpreter nothing tests the package on.
+
+Pin the lint toolchain in every consumer too. Both repos carry
+`ruff>=0.15`, and they had drifted to 0.16.1 (UI) and 0.16.2 (API) by
+2026-08-28. Measured that day the drift was benign — identical 415-rule set,
+both clean — but a floating pin makes a lint verdict depend on when a
+machine last installed, which is how a PR passes locally and fails for a
+teammate with no code difference. This package now pins exactly; steps 5a
+and 6a touch both requirements files anyway. **Provision
 the read-only PAT under the same secret name in both orgs now** — step 5a
 lands a private pin into a requirements.txt that the API merge gate installs
 on every PR, so without the credential that PR turns the repo's only gate
 red. Do **not** tag yet.
 
-1. **Reporter** — `soterix_qa_core.qatouch.reporter`, base = UI
+1. **Reporter** — split into a move and a designed change, so a regression
+   points at one of them rather than both.
+   - **1a (done)** the behaviour-preserving port, above.
+   - **1b (next, carries S5)** re-key the reporter from `case_key` to node id
+     behind a `ResultSink` interface. Today `results`, `durations`,
+     `screenshots` and `case_projects` are all keyed by `case_key`, so two
+     tests sharing a key collide (measured: UI 42 keys claimed by more than
+     one node id, 38 after collapsing parametrization) and an unmapped test
+     has no primary record at all. Node id is the identity every other
+     consumer already uses — `last_run_results.json` is written that way, and
+     the Jira filer keys off it. The sink split also fixes the A2 finding
+     above at no extra cost: a local-record sink registers unconditionally
+     while the QA Touch sink still waits to be armed. Do it now — after
+     step 4 freezes the shape behind shims and a version tag it costs
+     roughly three times as much.
+   - Remaining in step 1: `retry_uploads` (needs the GUARDED shim form, see
+     Rule 2's correction) and the one live upload that verifies the two
+     API-repo behaviours unification fixes.
+
+   Original scope note — `soterix_qa_shared.qatouch.reporter`, base = UI
    `plugins/qatouch_reporter.py` (a strict superset of the API copy).
    Retarget the lazy client import; apply Rules 5-8; bring `retry_uploads`
    along (it gets a plain-form shim in the UI repo, like the other
@@ -246,7 +312,7 @@ red. Do **not** tag yet.
      `signature`, `digest`, `seen`, `history` — the four-field `Evidence`
      sketch does not cover it).
 
-3. **Jira** — `soterix_qa_core.jira`: extract `JiraClient` and FIX its latent
+3. **Jira** — `soterix_qa_shared.jira`: extract `JiraClient` and FIX its latent
    bug (the `return {'key': ...}` sits inside `if story_link:`, so a real
    create with no story link returns None); package `QATouchToJiraMapper` and
    the discovery CLI with an injected mapping path. `multi_gate_validation`,
@@ -289,11 +355,15 @@ red. Do **not** tag yet.
 
 ## Known follow-ups the migration must not forget
 
-- Both consumer repos silence the reporter's lint findings with **path-based**
-  per-file-ignores (`plugins/**/*.py`). Once the code lives in the package
-  those patterns no longer match it, so the ignores must move into this
-  package's `ruff.toml` (already seeded for the client) or the findings
-  reappear in whichever repo lints next.
+- ~~Both consumer repos silence the reporter's lint findings with
+  path-based per-file-ignores.~~ **Done, and the prediction was half right.**
+  Measured: the UI repo does not silence them at all — `ruff check
+  plugins/qatouch_reporter.py` reports 10 findings that the repo simply
+  carries. Nine moved with the code. The package now silences BLE001 by file
+  with the Rule 7 reason written down, and fixes the tenth (RUF046, a
+  redundant `int(round(...))`). When the UI's reporter becomes a shim those
+  10 leave the UI's lint output; do not read that drop as a regression in
+  the guard.
 - The package docstring and `pyproject` description must widen in the same
   commit that lands the reporter (step 1) and the Jira layer (step 3). Rule 4
   forces a version bump at those points, so metadata and contents move

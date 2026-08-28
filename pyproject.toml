@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "soterix-qa-core"
-version = "0.1.0"
-description = "Shared QA Touch client for the Soterix QA repos."
+name = "soterix-qa-shared"
+version = "0.2.0"
+description = "Shared QA pipeline for the Soterix QA repos: QA Touch client and pytest result reporter."
 requires-python = ">=3.11"
 # Base install is client-only on purpose: the UI canary job and any future
 # script consumer must not drag pytest in. The reporter extra adds it.
@@ -16,10 +16,15 @@ dependencies = [
 [project.optional-dependencies]
 reporter = ["pytest"]
 jira = ["jira>=3.10"]
-dev = ["pytest", "ruff>=0.15", "pytest-html"]
+# Pinned exactly, not floored. Ruff moves rules between minor releases,
+# so a floating pin makes a lint result depend on when a machine last
+# installed. Measured 2026-08-28: the UI repo had 0.16.1 and the API repo
+# 0.16.2 - same 415-rule set and both clean here, so the drift was benign
+# that day. The pin is what keeps it that way.
+dev = ["pytest==9.1.1", "ruff==0.16.2", "pytest-html==4.2.0"]
 
 [tool.setuptools.package-data]
-soterix_qa_core = ["py.typed"]
+soterix_qa_shared = ["py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

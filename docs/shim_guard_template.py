@@ -1,4 +1,4 @@
-"""Guards for the soterix-qa-core compatibility shims.
+"""Guards for the soterix-qa-shared compatibility shims.
 
 A broken shim is silent. Replacing the module alias with a star-import leaves
 the reporter suite green while every monkeypatch seam stops reaching the code
@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from soterix_qa_core.qatouch import client as pkg_client
-from soterix_qa_core.qatouch import reporter as pkg_reporter
+from soterix_qa_shared.qatouch import client as pkg_client
+from soterix_qa_shared.qatouch import reporter as pkg_reporter
 
 from plugins import qatouch_reporter as shim_reporter
 from tools import qatouch_client as shim_client
