@@ -31,7 +31,7 @@ not drag in a test runner.
 
 ## Where it stands
 
-**Step 1 complete.** 154 tests, ruff clean, wheel builds and imports in a
+**Steps 1 and 2a complete.** 190 tests, ruff clean, wheel builds and imports in a
 clean interpreter.
 
 | Module | Lines | What it is |
@@ -44,6 +44,9 @@ clean interpreter.
 | `qatouch.mapping` | 51 | Node-id/case-key helpers |
 | `qatouch.artifacts` | 32 | Frozen shapes of the JSON other tools parse |
 | `qatouch.layout` | 30 | Where a consumer repo keeps its files |
+| `reporting.products` | 121 | QA Touch project keys and their product names |
+| `reporting.paths` | 90 | Fitting a name under Windows' 260-char limit |
+| `reporting.branding` | 75 | The company logo, embedded into a page |
 
 Two design decisions worth knowing before reading the code:
 
@@ -65,9 +68,9 @@ ledger only on armed ones.
 |---|---|---|
 | 0 | partial | Repo, CI, interpreter range, PAT |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
-| 2a | next | Move `products`, `paths`, `branding` |
+| 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
-| 3 | | Jira layer |
+| 3 | next | Jira layer |
 | 4 | | Shims + guards, then tag |
 | 5 | | Migrate the API repo (5a pin, 5b shims) |
 | 6 | | Migrate the UI repo (6a pin, 6b shims) |
@@ -118,12 +121,27 @@ accepted-but-ignored forms, and its playwright branch calls
 `AttributeError` is swallowed, so the symptom is three retries then a
 zero-upload run). Needs a real QA Touch run, so it goes with step 5b.
 
-**2a.** Move the stdlib-only leaves `products`, `paths`, `branding` with their
-266 test lines. The package owns the `PRODUCTS` table and `product_name`;
-`PATH_RULES` stays consumer-supplied, since the c2c rule is meaningless in
-the API repo. The report-title hook moves from the API conftest as an
-**opt-in** hook. The UI has none today, so "own it once" means *giving* the
-UI a title it lacks. Decide that deliberately.
+**2a. Done.** `products`, `paths` and `branding` are in
+`soterix_qa_shared.reporting`, verified against the originals across 585
+inputs with zero mismatches. Two seams the move had to open:
+
+- `PATH_RULES` ships **empty**. A rule about `tests/ui/c2c/` describes one
+  repo's folders, and shipping it would route another repo's tests to a
+  product whose run key the session does not have. The consumer calls
+  `products.configure_path_rules()`.
+- `branding` took its logo paths from `Path('assets')`, relative to the
+  working directory. That worked only because every caller ran from the repo
+  root. It now takes a root through `configure()`, and clears its logo cache
+  there, so a rebuilt PNG at the same path is re-read.
+
+Still open from 2a: the report-title hook. The API conftest has one and the
+UI has none, so moving it as an **opt-in** hook means *giving* the UI a
+title it lacks. That is a deliberate decision nobody has taken.
+
+One test stayed in the UI repo: it reads `docs/QA_TOUCH_INTEGRATION.md` and
+asserts the table matches. That doc is the source of truth for the table and
+it lives in the consumer, so the test belongs there and will point at the
+package through the shim.
 
 **2b. Deferred, and needs its own design pass first.** `run_archive` (1124),
 `run_report` (1746), `report_media` (400), `health_summary` (718),
