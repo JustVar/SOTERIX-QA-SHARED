@@ -1,0 +1,12 @@
+# Ruff settings for soterix-qa-core.
+# Run: python -m ruff check .
+# No rules are selected here, so ruff's defaults apply. Only the
+# exceptions below are local to this package.
+
+# Templates that consuming repos copy. Their imports resolve in the
+# consumer, not here, so linting them in this repo is meaningless.
+exclude = ["docs/shim_guard_template.py"]
+
+[lint.per-file-ignores]
+# The QA Touch client reports every failure to its caller and keeps going.
+"src/soterix_qa_core/qatouch/client.py" = ["BLE001"]

@@ -36,9 +36,10 @@ under-specified, this document says so rather than implying it is planned.
    modules with a real CLI need the guard *before* the alias swap. Modules
    without a `main()` must NOT use the guarded form: it raises
    `AttributeError` on `python -m`.
-   - **Guarded form** — today exactly one module qualifies: `run_report`
-     (`def main(argv=None)`), plus any `tools/*` module that actually moves
-     and has a `__main__` guard.
+   - **Guarded form** — only for a module with a real CLI. No module in the
+     scope of steps 1-6 needs it: `run_report` qualifies but is deferred to
+     2b, so the guarded form first applies when 2b (or a moving `tools/*`
+     module with a `__main__` guard) lands.
    - **Plain form** — everything else (`products`, `paths`, `branding`,
      `qatouch_client`, `qatouch_reporter`): same template minus the two guard
      lines.
@@ -65,7 +66,11 @@ under-specified, this document says so rather than implying it is planned.
 
    The `exc.name` check is load-bearing: without it, a missing dependency
    *of the package* is misreported as "the package is not installed", and
-   step 2 deliberately puts Playwright rendering behind its own module.
+   step 2 deliberately puts Playwright rendering behind its own module. Keep
+   the `from soterix_qa_core.qatouch import reporter as _mod` form: the
+   dotted `import soterix_qa_core.qatouch.reporter` form makes a partial
+   install (package present, submodule missing) misreport as "not
+   installed", while this form raises a truthful ImportError instead.
 
 3. **Registration is unconditional; the failure is legible.** Conditional
    registration was tested and rejected: with the package absent,
@@ -78,6 +83,11 @@ under-specified, this document says so rather than implying it is planned.
    in either repo, so **drop the "reporting is opt-in" framing from both
    READMEs** and add the editable install to both Quickstarts and to the
    merge runbook's contributor steps.
+   Unconditional registration makes *absence* legible. A stale **installed**
+   version reproduces the rejected mode exactly (`pytest --qatouch-upload`
+   exits 4 with `unrecognized arguments`, package never named), which is
+   reachable through Rule 4's silent no-op. Rule 4's two guards are therefore
+   prerequisites, not hygiene.
 
 4. **Every release tag MUST also bump `[project] version`.** Reproduced: with
    the version unchanged, `pip install -r requirements.txt` against a new tag
@@ -95,7 +105,12 @@ under-specified, this document says so rather than implying it is planned.
    root explicitly via a `configure(root: Path)` the shim calls — the pytest
    plugin supplies `config.rootpath`, the CLIs supply the repo root they
    resolve themselves. Exported names become **functions, not constants**, so
-   `run.py` and `health_summary.py` stop importing frozen values.
+   `run.py` and `health_summary.py` stop importing frozen values. Two details
+   the rehearsal had to invent, so state them: `configure(root)` is called at
+   the TOP of `pytest_configure`, before the arming check — the writer paths
+   must be correct even for an unarmed run, since `last_run_results.json` is
+   written every session. And `--rootdir` silently relocates every derived
+   path, so the shim guard asserts the writer paths sit inside the repo.
 
 6. **Read module globals at call time.** The path values stay monkeypatchable
    only if functions read the module global when called; a recompute-on-use
@@ -117,8 +132,11 @@ under-specified, this document says so rather than implying it is planned.
      achievable for a constructor and is not claimed here.)
    - Contract: `policy(path: Path) -> tuple[dict[str, str], dict[str, int]]`
      — the mapping and the counts, so the UI's "N of M rows are unreviewed"
-     warning survives. Missing policy: `pytest_configure` degrades to
-     no-upload with a loud terminal line.
+     warning survives. Missing policy, or a policy that raises:
+     `pytest_configure` degrades to no-upload and says so. Emit with plain
+     `print()` — `config.get_terminal_writer()` raises `AssertionError`
+     inside `pytest_configure` (measured, pytest 9.1.1), which Rule 7 forbids,
+     and `log.warning` is not reliably visible.
    - UI injects `reviewed_lookup`; the API injects an explicit permissive
      loader (and see the contract below: whether the API should instead adopt
      the reviewed gate is an open decision, not a permanent exemption).
@@ -181,8 +199,12 @@ URLs; `company` = Soterix-Systems fetch-only (the verified workspace shape).
 Copy the governance files that do not travel: `AGENTS.md`, `README.md`,
 `ruff.toml`, `docs/writing/ste.md`, `docs/STYLE.md`, a merge runbook. Add a
 `MEMORY.md` pointer and run `~/.claude/memory_lint.py`. Add the package's own
-CI: collect gate, the tag-equals-version guard (Rule 4), the wheel-install
-import job (Rule 9), and a per-interpreter shim-identity matrix. **Provision
+CI: collect gate, **a ruff lint job** (the copied ruff.toml is inert without
+one), the tag-equals-version guard (Rule 4), the wheel-install import job
+(Rule 9, which now has a real instance to catch: `py.typed`), and a
+per-interpreter shim-identity matrix. **Decide the interpreter range here**,
+not in step 7 — it is the input to that matrix (`pyproject` says >=3.11, the
+API gate runs 3.12, UI dev runs 3.14). **Provision
 the read-only PAT under the same secret name in both orgs now** — step 5a
 lands a private pin into a requirements.txt that the API merge gate installs
 on every PR, so without the credential that PR turns the repo's only gate
@@ -191,7 +213,9 @@ red. Do **not** tag yet.
 1. **Reporter** — `soterix_qa_core.qatouch.reporter`, base = UI
    `plugins/qatouch_reporter.py` (a strict superset of the API copy).
    Retarget the lazy client import; apply Rules 5-8; bring `retry_uploads`
-   along and freeze the `upload_failures.json` entry shape it parses.
+   along (it gets a plain-form shim in the UI repo, like the other
+   no-CLI modules) and freeze the `upload_failures.json` entry shape it
+   parses.
    Two API-repo behaviours that unification fixes, to verify with one live
    upload: its run-key identifier and case_key fallback are the measured
    accepted-but-ignored forms, and its playwright branch calls
@@ -230,13 +254,17 @@ red. Do **not** tag yet.
 
 4. **Shims + shim guards, then tag.** Module-alias shims per Rules 2-3, with
    the policy injection of Rule 8. Move the reporter/client unit tests into
-   this package. Add `tests/plugins/test_shims.py` to EACH consuming repo — a
+   this package — noting that two of them exercise repo-local behaviour and
+   must be adapted rather than moved wholesale. Add `tests/plugins/test_shims.py` to EACH consuming repo — a
    broken shim is otherwise silent: replacing the alias with a star-import
    left the UI's own reporter suite fully GREEN while every monkeypatch seam
    stopped reaching the running code. The guard asserts module identity, that
    patching the old path reaches the package, and that writer paths stay
    inside the repo; the UI copy adds a test that the reviewed-gate policy is
-   the one injected. **Then** bump `[project] version` and tag (Rule 4) — the
+   the one injected. **The literal file is `docs/shim_guard_template.py` in
+   this repo** (11 tests, authored and mutation-proved in the rehearsal: a
+   star-import shim fails 6 of them while the repo's own reporter suite stays
+   green). Copy it to each consumer as `tests/plugins/test_shims.py`. **Then** bump `[project] version` and tag (Rule 4) — the
    tag must contain the reporter that step 5's shims import.
 
 5. **Migrate the API repo** (4 consumers, subset tests, and unification fixes
@@ -258,6 +286,18 @@ red. Do **not** tag yet.
    member (or publish to an index they can already reach). Reconcile the
    interpreter range: `pyproject` says `>=3.11`, the API gate runs 3.12 and
    UI dev runs 3.14 — pick one and state it.
+
+## Known follow-ups the migration must not forget
+
+- Both consumer repos silence the reporter's lint findings with **path-based**
+  per-file-ignores (`plugins/**/*.py`). Once the code lives in the package
+  those patterns no longer match it, so the ignores must move into this
+  package's `ruff.toml` (already seeded for the client) or the findings
+  reappear in whichever repo lints next.
+- The package docstring and `pyproject` description must widen in the same
+  commit that lands the reporter (step 1) and the Jira layer (step 3). Rule 4
+  forces a version bump at those points, so metadata and contents move
+  together.
 
 ## Guardrails to preserve
 

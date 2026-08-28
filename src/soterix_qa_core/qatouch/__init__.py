@@ -1,4 +1,4 @@
-"""QA Touch pipeline: client, statuses, and the pytest result reporter."""
+"""QA Touch pipeline: API client and status codes."""
 from .client import (
     LEGACY_CASE_FIELDS,
     PYTEST_TO_QATOUCH,

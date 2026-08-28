@@ -1,31 +1,42 @@
 """QA Touch API client wrapper.
 
-Endpoints (verified 2026-02-18):
+Endpoint inventory. Dates are when each was last confirmed against the live
+API; per-method docstrings carry the measured detail and are authoritative.
+
   Read:
     GET  /api/v1/getAllProjects
     GET  /api/v1/getAllTestCases/{project_key}?page=N       (50/page)
     GET  /api/v1/getAllModules/{project_key}?page=N         (20/page)
-    GET  /api/v1/getAllTestRuns/{project_key}                (20/page)
+    GET  /api/v1/getAllTestRuns/{project_key}               (20/page)
     GET  /api/v1/testRunResults/{project_key}/{run_key}     (100/page)
     GET  /api/v1/testRun/availableUsers/{project_key}
-    GET  /api/v1/getAllRequirements/{project_key}
+    GET  /api/v1/getTestRunlist/{case_key}                  (runs for one case)
   Write - Test Runs:
     POST /api/v1/testRun                                    (all cases)
     POST /api/v1/testRun/specific                           (specific case IDs)
-    POST /api/v1/testRun/specific/module/mode               (by module, optional mode filter)
+    POST /api/v1/testRun/specific/module/mode               (by module + mode)
     POST /api/v1/clone/testRun                              (clone existing run)
   Write - Entities:
-    POST /api/v1/projects
-    POST /api/v1/modules
-    POST /api/v1/testCase                                (create case - verified 02/19)
-    POST /api/v1/testCase/steps                          (create STEP case - verified 08/27)
+    POST /api/v1/project                                 (create project)
+    POST /api/v1/module                                  (create module)
+    POST /api/v1/testCase                                (create case, 02/19)
+    POST /api/v1/testCase/steps                          (create STEP case, 08/27)
+    POST /api/v1/testcase/update                         (partial case update)
     POST /api/v1/milestone                               (create release/milestone)
   Results:
-    PATCH /api/v1/testRunResults/status/multiple
-  Not Available via API:
+    POST  /api/v1/testRunResults/testrun/code            (PREFERRED writer:
+          the only endpoint whose response names the case it changed)
+    PATCH /api/v1/testRunResults/status/multiple         (legacy)
+
+  Paths that 404 - do not use: /api/v1/projects and /api/v1/modules (plural).
+  create_project and create_module call the singular forms above.
+
+  Not available via API:
     - Delete test cases or runs (UI only)
-    - Update case title, type, mode, or tags (UI only)
-    - List releases/milestones (creation works, but list endpoint returns empty)
+    - Update case tags (UI only; title/type/mode DO update via
+      update_test_case)
+    - List releases/milestones (creation works, list returns empty)
+
   API Limitations on Case Creation:
     - Only reliably sets: projectKey, sectionKey, caseTitle, description, precondition
     - Type, Priority, Mode, Tags are IGNORED (default to Acceptance/Critical)
@@ -114,7 +125,7 @@ class QATouchError(Exception):
 
 # QA Touch renamed the test-case fields in its public API some time after
 # 2026-03-27. The old names are still in every snapshot under
-# config/qatouch_snapshots/ and in the tools that read them, so a rename
+# the UI repo's config/qatouch_snapshots/ and in the tools that read them, so a rename
 # would silently break every one of those tools - they would read a missing
 # key and quietly fall back to "Unknown". Rather than chase the rename
 # through each tool, every case record carries both names.
@@ -225,8 +236,6 @@ class QATouchClient:
 
         Was previously POST /api/v1/modules with a JSON body and numeric ids.
         That path does not exist - it returns 404 - so this call never worked.
-        tools/migrate_pp_cases_phase_a.py carries a local workaround built on
-        the same query-parameter form used here.
         """
         params = {'projectKey': project_key, 'moduleName': name}
         if parent_key:
