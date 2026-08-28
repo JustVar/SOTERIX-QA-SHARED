@@ -1,7 +1,7 @@
 # Rules and contract
 
 Nine rules and one contract. Each was reproduced, not reasoned about. Break
-one and the migration fails **quietly** — that is what they all have in
+one and the migration fails **quietly**. That is what they all have in
 common, and why they are written down instead of left to judgement.
 
 Read this before changing the packaging, the shims, or anything that writes
@@ -14,7 +14,7 @@ true.
 
 Listing both the shim path and the package path in `pytest_plugins` raises
 `ValueError: Plugin already registered under a different name` before any
-hook runs — every session in both repos dies at configure time.
+hook runs, so every session in both repos dies at configure time.
 
 **So:** entry point OR shim, never both. The package ships no `[pytest11]`
 entry point while consumers keep the shim.
@@ -22,7 +22,7 @@ entry point while consumers keep the shim.
 ### 2. Two shim shapes; the guarded one only where a CLI exists
 
 A plain alias breaks any CLI: the module body swaps `sys.modules` and falls
-off the end, so the command exits 0 having run nothing. Measured — through a
+off the end, so the command exits 0 having run nothing. Measured: through a
 plain shim, `python tools/retry_uploads.py --dry-run` printed nothing and
 exited 0 with a real pending failure in the log.
 
@@ -64,7 +64,7 @@ Two details are load-bearing:
 
 Conditional registration was tested and rejected. With the package absent,
 `pytest --qatouch-upload` exits 4 with `unrecognized arguments` and never
-names the package, and `QATOUCH_UPLOAD=1` does nothing at all — a silent
+names the package, and `QATOUCH_UPLOAD=1` does nothing at all, a silent
 wrong result.
 
 **So:** the root conftest keeps `pytest_plugins` unconditional and relies on
@@ -76,7 +76,7 @@ READMEs, and add the editable install to both Quickstarts and the merge
 runbook.
 
 A stale *installed* version reproduces the rejected mode exactly, and is
-reachable through rule 4's silent no-op — so rule 4's guards are
+reachable through rule 4's silent no-op, so rule 4's guards are
 prerequisites, not hygiene.
 
 ### 4. Every release tag must also bump `[project] version`
@@ -94,7 +94,7 @@ not equal `[project] version`, and a consumer-side assertion that
 After installation `__file__` points into site-packages. Rootpath alone is
 not enough either: two documented CLIs run with no pytest config at all.
 
-**So:** the consumer passes a root to `configure(root)` — the plugin from
+**So:** the consumer passes a root to `configure(root)`. The plugin reads it from
 `config.rootpath`, a CLI from the root it resolves itself. `layout.paths_for`
 holds the single definition of what sits where.
 
@@ -107,7 +107,7 @@ so the shim guard asserts the writer paths sit inside the repo.
 
 The path values stay monkeypatchable only if code reads the module global
 when called. A recompute-on-use variant ignored both test patches and wrote
-into the real repo — while the test that thought it was isolated still
+into the real repo, while the test that thought it was isolated still
 passed.
 
 ### 7. Guard every write inside a pytest hook
@@ -125,11 +125,11 @@ Which mapping rows may upload is a per-repo decision, so the package holds no
 opinion. The UI gates on `reviewed`; the API does not.
 
 - **Channel:** the shim sets `_mod.MAPPING_POLICY = <callable>` *before* the
-  `sys.modules` swap. Not a constructor argument — the reporter is built
+  `sys.modules` swap. Not a constructor argument, because the reporter is built
   inside `pytest_configure`, where a missing argument is an `INTERNALERROR`.
 - **Contract:** `policy(path: Path) -> (mapping, counts)`. The counts keep the
   UI's "N of M rows are unreviewed" warning alive. A missing `reviewed` key
-  means "not gated", never `KeyError` — zero of the API's 31 rows carry one.
+  means "not gated", never `KeyError`. Zero of the API's 31 rows carry one.
 - **Failure:** no policy, or a policy that raises, resolves nothing and says
   so. Never a permissive fallback: an unreviewed guess writes a real status
   onto a case no test verifies.
@@ -144,13 +144,13 @@ opinion. The UI gates on `reviewed`; the API does not.
 
 An editable install's `.pth` masks missing data files. A CI job must install
 the **built wheel** and import every subpackage. (It does not mask a missing
-`__init__.py` — PEP 420 makes those importable either way.)
+`__init__.py`. PEP 420 makes those importable either way.)
 
 ## The compatibility contract
 
 **The shared mutable artifact is the QA Touch project, not the JSON files.**
 `logs/upload_failures.json` and `logs/last_run_results.json` are per-repo and
-gitignored, read only by the same repo's tools — *because* rules 5-7 keep
+gitignored, read only by the same repo's tools, *because* rules 5-7 keep
 their writer paths inside the consumer repo. That containment is not free.
 
 **One written path IS tracked: `history/YYYY-MM.jsonl`.** One append-only
@@ -167,12 +167,12 @@ both results stand.
 **One `case_key` should map to one test function.** The real hazard is
 *within-repo* duplication. Measured: UI 42 keys claimed by more than one node
 id (76 redundant claims), API 5 (19); collapsing parametrization, UI 38, API
-4. The reporter handles this — worst status wins — but the mapping should
+4. The reporter handles this (worst status wins), but the mapping should
 still be cleaned.
 
 **Cross-repo:** exactly one shared key across 409 rows, `WEnvKQ` (API
 `test_get_site_status`; UI `test_admin_sites.py::test_check_site_status`).
-**Dormant** — the UI row is `reviewed: false` and the UI gates on reviewed.
+**Dormant**. The UI row is `reviewed: false` and the UI gates on reviewed.
 Live only if someone reviews it. Hygiene, not a migration blocker.
 
 **The duplicate checker:** a console script taking N mapping paths. Each
@@ -184,7 +184,7 @@ a NEW duplicate versus a committed baseline. Reuse the UI's existing
 **Product model as it is today:** every mapped case is JlW1. `tests/ui/c2c/`
 is tracked (7 files) and routed to 60W5 by `products.PATH_RULES`, but has no
 mapping rows, so it cannot report. The uploader and the reporting layer
-resolve product by different mechanisms — the reporter never imports
+resolve product by different mechanisms. The reporter never imports
 `products.py`. Unifying `PRODUCTS` does not unify resolution, and c2c uploads
 would also need a per-project run key.
 
@@ -196,5 +196,5 @@ version changed upload semantics.
 Mapping stays in config JSON, never in test files. One run at a time.
 Assertions stay read-only during repair. QA Touch upload is dormant until
 armed. Jira is double-gated and approval-first. The archive's display-only
-mapping read stays optional by contract — a missing file means no case
+mapping read stays optional by contract. A missing file means no case
 titles, not an error.

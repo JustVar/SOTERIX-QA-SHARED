@@ -21,7 +21,7 @@ away from.
 
 ## Only armed runs
 
-A run is ledgered when it uploaded to QA Touch — that is, `--qatouch-upload`
+A run is ledgered when it uploaded to QA Touch, that is, `--qatouch-upload`
 *and* a run key. Nothing else is.
 
 The reason is signal, not size. In one week of development, 71 runs were
@@ -61,7 +61,7 @@ edit or reorder existing lines.
 readable.
 
 **On a merge conflict, keep both lines** in timestamp order. That is always
-the right resolution — two runs happened, and both did.
+the right resolution. Two runs happened, and both did.
 
 Add to each consumer repo's `.gitignore`, so the directory is tracked while
 everything else under it is not:
@@ -81,7 +81,7 @@ grep -l . history/*.jsonl | xargs cat \
   | jq -r 'select(.failed[]? | test("test_grid")) | "\(.at) \(.commit)"'
 ```
 
-Is the suite getting slower — duration of full-suite runs over time:
+Is the suite getting slower, by the duration of full-suite runs over time:
 
 ```bash
 cat history/*.jsonl \

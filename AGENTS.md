@@ -46,9 +46,15 @@ and the reporter says so - it never falls back to permissive.
 ## Before you commit
 
 ```bash
-python -m pytest tests/ -q          # 143 tests, all offline
+python -m pytest tests/ -q          # 154 tests, all offline
 python -m ruff check .
+python tools/prose_check.py         # the mechanical rules from docs/STYLE.md
 ```
+
+The prose check exists because these docs were written before the style
+rules were wired into this repo, and 42 em dashes went in. Only the
+mechanical rules are checked. Code is exempt, so fenced blocks, inline spans
+and link targets are stripped before anything is counted.
 
 Commit messages describe what the change does, in the repo's voice. No AI
 attribution, no co-author lines, no model names.

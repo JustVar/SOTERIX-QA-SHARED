@@ -96,8 +96,9 @@ destinations, and must never fail the test session itself.
 
 ```bash
 pip install -e .[dev]
-python -m pytest tests/ -q      # 143 tests, all offline: no network, no browser
+python -m pytest tests/ -q      # 154 tests, all offline: no network, no browser
 python -m ruff check .
+python tools/prose_check.py     # the writing rules, mechanical ones only
 ```
 
 The dev toolchain is pinned exactly rather than floored. A floating pin makes
