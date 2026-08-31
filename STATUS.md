@@ -74,8 +74,8 @@ every session that ran a test and the ledger only on armed ones.
 | 2b | deferred | The rest of the reporting stack |
 | 3 | **done** | Jira layer |
 | 4 | **done** | Shims + guards, tagged **v0.16.0** |
-| 5 | 5a done | API repo: pin landed; 5b shims next |
-| 6 | 6a done | UI repo: pin landed; shims proven on a branch |
+| 5 | **done** | API repo: pinned and shimmed, on `shim-migration` |
+| 6 | **done** | UI repo: pinned and shimmed, on `shim-rehearsal` |
 | 7 | | Docs |
 
 **0. The guards later steps depend on.** The package's CI is in place
@@ -233,6 +233,28 @@ produces a file to commit.
 **7. Docs.** Both README Quickstarts, the merge runbook's contributor steps,
 and credential setup for every QA team member (or publish to an index they
 already reach).
+
+## What is left
+
+Both consumers are shimmed and green, each on a branch. Merging them is a
+review, not more engineering.
+
+| | UI repo | API repo |
+|---|---|---|
+| Branch | `shim-rehearsal` | `shim-migration` |
+| Shims | 6 | 2 |
+| Guards | 16 | 13 |
+| Suite | 618 passed, 4 skipped | 30 passed, 84 collected |
+
+**Before an armed upload can land in the API repo**, its 5 reviewed cases
+need to be in a QA Touch test run. They are all in the `API Integrations`
+module and appear in none of the ten runs, so an armed session today
+resolves no case codes and fails loudly rather than writing anything. That
+is QA Touch housekeeping and the naming follows a release cadence this
+document cannot infer.
+
+**Still not built:** the per-interpreter shim-identity matrix, and step 2b's
+reporting stack.
 
 ## Follow-ups the migration must not forget
 
