@@ -1,0 +1,129 @@
+name: ci
+
+# Two repos install this package and run their whole test suite through it,
+# so a quiet defect here is a quiet defect everywhere. Every job below
+# guards a failure mode that was reproduced, not imagined. See docs/RULES.md.
+#
+# Nothing here needs a credential. The tests are offline by construction:
+# no network, no browser, no QA Touch key.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  # The interpreter range is a claim until something exercises it.
+  # pyproject says >=3.11; the API repo's gate runs 3.12 and UI dev runs
+  # 3.14. Before this matrix, only 3.14 was ever run.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e .[dev]
+      - name: Tests
+        run: python -m pytest tests/ -q
+      - name: Lint
+        run: python -m ruff check .
+      - name: Prose
+        run: python tools/prose_check.py
+
+  # Rule 9. An editable install's .pth masks a missing package-data file,
+  # so the only honest check installs the BUILT WHEEL. The base install is
+  # client-only on purpose: importing the reporter must fail here naming
+  # pytest, which is what rule 2's exc.name check depends on.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build --wheel
+      - name: Install the wheel alone, base extras only
+        run: pip install dist/*.whl
+      - name: Every module a base install must import
+        run: |
+          python - <<'PY'
+          import importlib
+          for m in [
+              "soterix_qa_shared",
+              "soterix_qa_shared.qatouch",
+              "soterix_qa_shared.qatouch.client",
+              "soterix_qa_shared.qatouch.mapping",
+              "soterix_qa_shared.qatouch.artifacts",
+              "soterix_qa_shared.qatouch.layout",
+              "soterix_qa_shared.qatouch.results",
+              "soterix_qa_shared.qatouch.upload",
+              "soterix_qa_shared.qatouch.retry",
+              "soterix_qa_shared.reporting",
+              "soterix_qa_shared.reporting.paths",
+              "soterix_qa_shared.reporting.products",
+              "soterix_qa_shared.reporting.branding",
+              "soterix_qa_shared.jira",
+              "soterix_qa_shared.jira.client",
+              "soterix_qa_shared.jira.fields",
+          ]:
+              importlib.import_module(m)
+              print("ok", m)
+          PY
+      - name: py.typed ships with the wheel
+        run: |
+          python -c "import importlib.util,pathlib,sys; p=pathlib.Path(importlib.util.find_spec('soterix_qa_shared').origin).parent/'py.typed'; sys.exit(0 if p.exists() else 'py.typed missing from the installed package')"
+      - name: The reporter needs its extra, and says which one
+        run: |
+          python - <<'PY'
+          import sys
+          try:
+              import soterix_qa_shared.qatouch.reporter          # noqa: F401
+          except ModuleNotFoundError as exc:
+              root = (exc.name or "").split(".")[0]
+              assert root == "pytest", f"expected pytest to be missing, got {exc.name}"
+              print("ok: base install reports the missing extra as", exc.name)
+              sys.exit(0)
+          sys.exit("the reporter imported without pytest, so the extras split is not real")
+          PY
+      - name: With the extra, it imports
+        run: |
+          pip install "$(ls dist/*.whl)[reporter]"
+          python -c "import soterix_qa_shared.qatouch.reporter; print('ok')"
+
+  # Rule 4. With [project] version unchanged, `pip install -r requirements`
+  # against a new tag pin is a silent exit-0 no-op that leaves the old code
+  # installed. -U does not rescue it. A tag that does not match the version
+  # is therefore a tag that consumers cannot pin to.
+  tag-matches-version:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag must equal [project] version
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys
+          tag = os.environ["GITHUB_REF_NAME"]
+          text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+          if not m:
+              sys.exit("no [project] version found in pyproject.toml")
+          version = m.group(1)
+          if tag.lstrip("v") != version:
+              sys.exit(
+                  f"tag {tag} does not match [project] version {version}.\n"
+                  "A consumer pinning this tag would install the previous code, "
+                  "silently, with exit 0."
+              )
+          print(f"ok: tag {tag} matches version {version}")
+          PY
