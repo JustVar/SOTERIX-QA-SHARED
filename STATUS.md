@@ -68,7 +68,7 @@ ledger only on armed ones.
 
 | Step | State | What |
 |---|---|---|
-| 0 | partial | Repo, CI, interpreter range, PAT |
+| 0 | mostly | Repo, CI and interpreter range done; PAT open |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
@@ -96,13 +96,11 @@ itself uses 4, and this repo has 21. The prose checker reports them under
 teaches people to skip the check. Sweeping all three repos is a decision
 nobody has taken yet.
 
-*Decide the interpreter range here*, since it is that matrix's input. Both
-repos' venvs run 3.14.6, the UI's workflows pin 3.14, the API's gate pins
-3.12, and `pyproject` claims `>=3.11`. The real floor is 3.11
-(`datetime.UTC`) but **only 3.14 is exercised**, so `>=3.11` is an
-unverified claim. Run the matrix on 3.11/3.12/3.14, or narrow the range. The
-matrix is preferable: the API gate already runs an interpreter nothing tests
-the package on.
+*The interpreter range is decided:* `>=3.11`, and the matrix exercises
+3.11, 3.12, 3.13 and 3.14. The floor is measured rather than assumed: an
+AST scan finds nothing newer than 3.11 in the package, and `datetime.UTC`
+in `qatouch/reporter.py` is what sets it. Before this, only 3.14 had ever
+run the package, while the API repo's gate ran 3.12.
 
 *Pin the lint toolchain in every consumer.* Both carry `ruff>=0.15` and had
 drifted to 0.16.1 (UI) and 0.16.2 (API). Benign when measured (identical
