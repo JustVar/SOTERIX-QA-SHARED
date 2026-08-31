@@ -286,6 +286,39 @@ def test_an_unarmed_run_writes_no_ledger_row(tmp_path):
     assert sink.summary() == []
 
 
+def test_the_ledger_is_written_even_when_the_upload_fails(tmp_path):
+    """The ledger records that a RUN happened, not that an upload did.
+
+    QA Touch being down is exactly when the timeline matters most, and a
+    ledger that skipped those runs would leave its gap over the bad week.
+    The two sinks are independent by construction: the ledger never sees the
+    upload's outcome. This pins that, because the docstring used to read "a
+    run that uploaded to QA Touch", which invites someone to make the row
+    conditional on a success it was never meant to depend on.
+    """
+    ledger = RunLedgerSink(tmp_path / 'history')
+    results = [_r('t::a', 'passed')]
+    context = _ctx(run_key='d6pw', project_key='JlW1')   # a run key IS armed
+
+    class FailingUpload:
+        name = 'qa touch'
+
+        def finish(self, results, context):
+            raise RuntimeError('QA Touch returned 503')
+
+    try:
+        FailingUpload().finish(results, context)
+    except RuntimeError:
+        pass
+    ledger.finish(results, context)
+
+    lines = (tmp_path / 'history' / '2026-08.jsonl').read_text(
+        encoding='utf-8').splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])['counts'] == {'passed': 1, 'failed': 0, 'skipped': 0}
+    assert ledger.written is True
+
+
 def test_an_armed_run_appends_one_line(tmp_path):
     sink = RunLedgerSink(tmp_path / 'history')
     sink.finish([_r('t::a', 'passed'), _r('t::b', 'failed')],

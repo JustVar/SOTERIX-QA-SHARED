@@ -21,8 +21,13 @@ away from.
 
 ## Only armed runs
 
-A run is ledgered when it uploaded to QA Touch, that is, `--qatouch-upload`
-*and* a run key. Nothing else is.
+A run is ledgered when it was ARMED to upload to QA Touch, that is,
+`--qatouch-upload` *and* a run key. Nothing else is.
+
+Armed means intent, not outcome. The row is written whether or not the
+upload succeeded. QA Touch being down is exactly when the timeline matters
+most, so a ledger that skipped those runs would leave its gap over the worst
+week.
 
 The reason is signal, not size. In one week of development, 71 runs were
 archived locally; almost all were `pytest -k something` while working on a

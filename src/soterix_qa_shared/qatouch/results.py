@@ -250,10 +250,15 @@ class RunLedgerSink(ResultSink):
     test start failing, is the suite getting slower, what did the suite look
     like before the release.
 
-    **Only armed runs are ledgered.** A run that uploaded to QA Touch is one
-    somebody meant; an exploratory `pytest -k something` is not, and 71 of
+    **Only armed runs are ledgered.** A run somebody armed for upload is one
+    somebody meant. An exploratory `pytest -k something` is not, and 71 of
     those in a week would bury the runs that matter. The distinction already
     exists, so nobody has to remember a flag.
+
+    Armed means intent, not outcome. The row is written whether or not the
+    upload succeeded, and this sink never sees the upload's result. QA Touch
+    being down is exactly when the timeline matters most, so a ledger that
+    skipped those runs would leave its gap over the worst week.
 
     One file per month keeps concurrent appends apart. When two people do
     collide, the conflict is two adjacent lines: keep both, in timestamp
