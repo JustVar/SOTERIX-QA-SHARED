@@ -100,20 +100,49 @@ def test_fit_name_falls_back_to_the_digest_when_the_folder_leaves_no_room(tmp_pa
 # Long-root warning (a consumer CLI prints it once at startup)
 # ---------------------------------------------------------------------------
 
+def _root_of_length(total):
+    """An ABSOLUTE path whose abspath is exactly `total` characters.
+
+    Built from the filesystem root rather than a literal like Path('C:/')
+    plus padding.
+    That literal is 101 characters on Windows and a RELATIVE path on Linux,
+    where abspath resolves it against the working directory and the length
+    depends on where CI checked the repo out. The interpreter matrix caught
+    it on its first run: 101 intended, 154 measured.
+
+    Not pytest's tmp_path either: that carries the test name and is already
+    about 100 characters, so there is no room left to pad down to the limit.
+    """
+    root = Path(os.path.abspath(os.sep))          # 'C:\' or '/'
+    candidate = root / 'r'
+    while len(os.path.abspath(candidate)) < total:
+        candidate = root / ('r' * (len(candidate.name) + 1))
+    assert len(os.path.abspath(candidate)) == total, (
+        f'could not build a {total}-char path from {root}')
+    return candidate
+
+
 def test_long_root_warning_is_silent_for_a_short_root():
     """A root at or under 100 characters gets no warning."""
     assert paths.LONG_ROOT == 100
-    assert paths.long_root_warning(Path('C:/') / ('r' * 97)) is None
+    root = _root_of_length(100)
+    assert len(os.path.abspath(root)) == 100
+    assert paths.long_root_warning(root) is None
+
+
+def test_long_root_warning_fires_one_character_past_the_limit():
+    """The boundary, in both directions, so the comparison cannot drift."""
+    assert paths.long_root_warning(_root_of_length(101)) is not None
 
 
 def test_long_root_warning_names_the_length_and_the_fixes():
     """A root past 100 characters gets one line with the length, the
     limit, and both fixes."""
-    root = Path('C:/') / ('r' * 120)
+    root = _root_of_length(140)
     text = paths.long_root_warning(root)
     assert text is not None
     assert '\n' not in text
-    assert f'Repo path is {len(os.path.abspath(root))} characters' in text
+    assert 'Repo path is 140 characters' in text
     assert '260' in text
     assert 'long paths' in text
     assert 'drive root' in text
