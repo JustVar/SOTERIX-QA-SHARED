@@ -71,7 +71,7 @@ every session that ran a test and the ledger only on armed ones.
 
 | Step | State | What |
 |---|---|---|
-| 0 | mostly | Repo, CI, interpreter range, deploy key done. Shim matrix open |
+| 0 | **done** | Repo, CI, interpreter range, deploy key, shim matrix |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
@@ -89,9 +89,14 @@ the reporter fails naming `pytest` (rule 2's `exc.name` branch depends on
 that staying true); and the tag-equals-version guard of rule 4, which runs
 only on a `v*` tag.
 
-NOT built, and step 0 does not close without it: a per-interpreter
-shim-identity matrix. `ci.yml` has three jobs and none of them builds a
-shim. It belongs in the consumer repos and lands with steps 5 and 6.
+Built 08/31 and step 0 closes. The per-interpreter shim-identity matrix
+lives in each consumer's `collect-gate.yml`, because `ci.yml` here has no
+shim to build. Each gate had pinned ONE interpreter, the UI on 3.14 and the
+API on 3.12, so the guards had run on one version per repo and no version
+had run both repos' shims. Measured on the first run: all 16 UI guards and
+all 13 API guards pass on 3.11, 3.12, 3.13 and 3.14. Only the guards are
+matrixed. What varies by interpreter is module identity, patch
+reachability and CLI dispatch, which is what they assert.
 
 *Governance files.* `README.md`, `AGENTS.md`, `docs/STYLE.md` and
 `docs/writing/ste.md` are in place, and `tools/prose_check.py` enforces the
@@ -260,8 +265,7 @@ the output said so, which is why `verify_results_landed` now reports run
 coverage. The same run also wrote absolute paths into the ledger, fixed in
 v0.20.0.
 
-**Still not built:** the per-interpreter shim-identity matrix, and step 2b's
-reporting stack.
+**Still not built:** step 2b's reporting stack, and step 7's docs.
 
 ## Follow-ups the migration must not forget
 
