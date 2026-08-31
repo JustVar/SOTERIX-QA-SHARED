@@ -31,7 +31,7 @@ not drag in a test runner.
 
 ## Where it stands
 
-**Steps 1 and 2a complete.** 190 tests, ruff clean, wheel builds and imports in a
+**Steps 1, 2a and 3 complete.** 241 tests, ruff clean, wheel builds and imports in a
 clean interpreter.
 
 | Module | Lines | What it is |
@@ -47,6 +47,8 @@ clean interpreter.
 | `reporting.products` | 121 | QA Touch project keys and their product names |
 | `reporting.paths` | 90 | Fitting a name under Windows' 260-char limit |
 | `reporting.branding` | 75 | The company logo, embedded into a page |
+| `jira.fields` | 243 | Mapping test data onto discovered custom fields |
+| `jira.client` | 208 | Creating an issue, or describing the one it would create |
 
 Two design decisions worth knowing before reading the code:
 
@@ -70,8 +72,8 @@ ledger only on armed ones.
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
-| 3 | next | Jira layer |
-| 4 | | Shims + guards, then tag |
+| 3 | **done** | Jira layer |
+| 4 | next | Shims + guards, then tag |
 | 5 | | Migrate the API repo (5a pin, 5b shims) |
 | 6 | | Migrate the UI repo (6a pin, 6b shims) |
 | 7 | | Docs |
@@ -152,14 +154,44 @@ evidence type carrying what the renderer consumes. `TestRecord` has separate
 `screenshots`/`frames`/`traces`/`videos` plus `headline`, `signature`,
 `digest`, `seen`, `history`.
 
-**3. Jira.** Extract `JiraClient` and fix its latent bug: the
-`return {'key': ...}` sits inside `if story_link:`, so a real create with no
-story link returns None. Package `QATouchToJiraMapper` and the discovery CLI
-with an injected mapping path. `multi_gate_validation`, the flaky DB and the
-CLI review loop stay in the UI repo.
+**3. Done.** `JiraClient` and the field mapper are in
+`soterix_qa_shared.jira`. Deciding *whether* a failure deserves a bug stays
+in the UI repo: `multi_gate_validation`, the flaky database and the approval
+loop did not move.
+
+**Two latent bugs, not one.** Both had the same shape, and both were
+reproduced against the original before being fixed. Work that belonged after
+the create was indented inside `if story_link:`, so it happened only when a
+caller passed a story to link to:
+
+- the `return`, so a real create with no story link returned None. The issue
+  existed in Jira; the review loop raised on `issue.get('key')`, caught it,
+  printed "Item remains pending" and left the item queued. Approving it
+  again files a duplicate.
+- the test-bug marking, so a `[TEST]` summary filed without a story link got
+  neither the `automation-test-DELETE-ME` label nor the admin comment. Test
+  bugs would accumulate in a real project with nothing marking them
+  disposable.
+
+Neither had been seen, because `BUG_CREATION_ENABLED` is false in every
+checked-in env file and the dry-run path returns before reaching them. They
+would have appeared on the first real filing.
+
+Two smaller repairs came with the move. The field loader read its JSON on
+every lookup, so one `map_bug_fields` call did more than a dozen reads of
+the same file, and the mapper held a constructor snapshot that could
+disagree with what those reads returned. It now reads once, keyed by path.
+And `MAPPING_JSON` was `__file__`-relative, which rule 5 forbids; it is
+injected.
 
 **4. Shims, guards, then tag.** Module-alias shims per rules 2-3 with rule
-8's policy injection. Copy `docs/shim_guard_template.py` into each consumer
+8's policy injection. The Jira shim is the awkward one: `JiraClient` and the
+mapper move, but they live inside `tools/smart_jira_bug_creator.py` and
+`config/jira_field_mapping.py` alongside code that stays, so those two files
+become partial shims (import the moved names, keep the rest) rather than
+whole-module aliases. That is a shape rule 2 does not cover, and it needs
+its own guard: the names must resolve to the package, and the code that
+stayed must still work. Copy `docs/shim_guard_template.py` into each consumer
 as `tests/plugins/test_shims.py` and edit the two THIS REPO markers. The
 template is proven: green against a real shimmed repo, and failing under a
 star-import shim (4 tests), a plain alias on a CLI module (1), and a missing

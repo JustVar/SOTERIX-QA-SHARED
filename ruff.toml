@@ -20,6 +20,9 @@ exclude = ["docs/shim_guard_template.py"]
 #   * A sink must not take the run's other sinks down with it.
 #   * The retry CLI must not abandon the remaining entries because one
 #     run was unreachable.
+#   * The Jira client decorates an issue AFTER creating it. The issue
+#     already exists; losing its key because a comment or a label failed
+#     would make the caller file the same bug a second time.
 #
 # In every case the failure is reported and the work degrades. Narrowing
 # these to specific exception types would mean guessing which ones a
@@ -30,3 +33,4 @@ exclude = ["docs/shim_guard_template.py"]
 "src/soterix_qa_shared/qatouch/results.py" = ["BLE001"]
 "src/soterix_qa_shared/qatouch/retry.py" = ["BLE001"]
 "src/soterix_qa_shared/qatouch/upload.py" = ["BLE001"]
+"src/soterix_qa_shared/jira/client.py" = ["BLE001"]
