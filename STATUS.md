@@ -79,7 +79,7 @@ every session that ran a test and the ledger only on armed ones.
 | 4 | **done** | Shims + guards, tagged **v0.16.0** |
 | 5 | **done** | API repo: pinned and shimmed, on `shim-migration` |
 | 6 | **done** | UI repo: pinned and shimmed, on `shim-rehearsal` |
-| 7 | | Docs |
+| 7 | **done**, one blocker | Docs. Access for two teammates is outstanding |
 
 **0. The guards later steps depend on.** The package's CI is in place
 (`.github/workflows/ci.yml`): tests, ruff and the prose check across a
@@ -105,8 +105,10 @@ written. Still missing: a `MEMORY.md` pointer, and a run of
 `~/.claude/memory_lint.py`.
 
 *The semicolon rule is stated but not enforced anywhere.* Measured
-2026-08-28: the UI README joins clauses with 14 of them, `docs/STYLE.md`
-itself uses 4, and this repo has 21. The prose checker reports them under
+2026-08-31: the UI README joins clauses with 14 of them, `docs/STYLE.md`
+itself uses 4, and this repo has 22, spread over `STATUS.md` (8),
+`docs/RULES.md` (8), and two each in `README.md`, `AGENTS.md` and
+`docs/RUN_HISTORY.md`. The two documents written for step 7 have none. The prose checker reports them under
 `--warnings` rather than failing, because failing every repo on day one
 teaches people to skip the check. Sweeping all three repos is a decision
 nobody has taken yet.
@@ -238,18 +240,37 @@ and silently never committed, the worst of both outcomes. Add it in the
 same commit as the pin, and say in the migration note that an armed run now
 produces a file to commit.
 
-**7. Docs.** Both README Quickstarts, the merge runbook's contributor steps,
-and credential setup for every QA team member (or publish to an index they
-already reach).
+**7. Docs.** Done 08/31, except one thing docs cannot fix.
+
+Both README Quickstarts are corrected. The API repo's never installed the
+package at all: measured on a clean venv, following it exactly left
+`pytest tests/plugins` unable to collect, stopping at `ImportError: ...
+soterix-qa-shared is not installed`. The UI repo's had the install line but
+described it as "the second line" when it is the fifth. Both now say where
+to clone the sibling checkout from, and both say not to use
+`requirements-shared.txt` locally.
+
+`docs/CONVENTIONS.md` and `docs/MERGE_RUNBOOK.md` are written. Conventions
+covers the testing standard, with each rule attached to the incident that
+earned it. The runbook covers the two remotes and the five release steps,
+because a merged change here reaches nobody until it is tagged AND each
+consumer is repinned.
+
+**The blocker is access, not documentation.** Measured 08/31, this repo has
+three collaborators: JustVar and SoterixSystems as admins, cschmoker-soterix
+as read. SandeepMuralidhara has write on BOTH consumer repos and
+Raghavendra-aski has write on the UI repo, and neither can read this one, so
+the clone step in both READMEs returns 404 for them and their checkout
+cannot run. No credential setup fixes that. Two read grants do.
 
 ## What is left
 
-Both consumers are merged to main, pinned to `v0.19.0`, and green on Linux
-CI.
+Both consumers are merged to main, pinned to `v0.20.0`, and green on Linux
+CI, including a shim matrix across 3.11 to 3.14.
 
 | | UI repo | API repo |
 |---|---|---|
-| Merged at | `6a9b946` | `c85a35b` |
+| Shim matrix | 16 guards x 4 interpreters | 13 guards x 4 interpreters |
 | Shims | 6 | 2 |
 | Guards | 16 | 13 |
 | Collected | 1416 | 84 |
@@ -265,7 +286,8 @@ the output said so, which is why `verify_results_landed` now reports run
 coverage. The same run also wrote absolute paths into the ledger, fixed in
 v0.20.0.
 
-**Still not built:** step 2b's reporting stack, and step 7's docs.
+**Still not built:** step 2b's reporting stack, which now also waits on
+Soterix-API-QA PR #2 and its own `_support/reporting.py`.
 
 ## Follow-ups the migration must not forget
 

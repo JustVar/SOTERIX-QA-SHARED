@@ -13,6 +13,24 @@ pointing here.
 rehearsal branch; the API repo does not reference this package at all. See
 `STATUS.md` for where that stands.
 
+## Access
+
+This repository is private. Before anything below works you need read access
+to it on the Soterix-Systems organisation, which is separate from access to
+the test repos: someone can have write on Soterix-WebApp-QA or
+Soterix-API-QA and still get a 404 cloning this one. Ask an organisation
+admin, then:
+
+```bash
+cd ..                 # beside the test repo, not inside it
+git clone https://github.com/Soterix-Systems/SOTERIX-QA-SHARED.git soterix-qa-shared
+```
+
+That is the only credential step. The install below is from disk, so it
+needs no key, no token and no SSH. CI is the exception: it installs from a
+pinned tag over SSH with a read-only deploy key, which is why
+`requirements-shared.txt` exists and why it is not for local use.
+
 ## Install
 
 ```bash
@@ -22,6 +40,11 @@ pip install -e ../soterix-qa-shared[reporter]  # adds pytest, for a test repo
 
 The base install is deliberately client-only, so a script that just talks to
 QA Touch does not drag in a test runner.
+
+Editable, and from the sibling checkout, on purpose. A package change can
+then be tested in a consumer before it is tagged. A consumer that installs
+the tag instead cannot see your change until you release it, which
+`docs/MERGE_RUNBOOK.md` covers.
 
 ## What it does
 
@@ -92,6 +115,8 @@ destinations, and must never fail the test session itself.
 | | |
 |---|---|
 | `docs/RULES.md` | What must stay true. Read before changing packaging, shims, or anything that writes a file. |
+| `docs/CONVENTIONS.md` | How code gets written here: the testing standard, and the traps that earned each rule. |
+| `docs/MERGE_RUNBOOK.md` | The two remotes, and the five release steps a consumer's pin depends on. |
 | `STATUS.md` | Where the migration stands and what comes next. |
 | `docs/RUN_HISTORY.md` | What a run leaves behind, and why one path is tracked. |
 | `AGENTS.md` | Guidance for AI coding tools working in this repo. |
