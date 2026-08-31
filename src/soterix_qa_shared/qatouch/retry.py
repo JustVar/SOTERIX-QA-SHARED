@@ -137,14 +137,44 @@ def _resolve_stale(stale: list[dict], replayable: list[dict]) -> list[dict]:
             still_stale.append(entry)
             continue
         complete, translated = translate_keys_to_codes(entry, rows)
-        if complete and translated:
-            entry['results'] = translated
-            entry['result_count'] = len(translated)
-            replayable.append(entry)
+        if not translated:
+            still_stale.append(entry)
+            continue
+
+        # SPLIT, rather than all or nothing. Measured against the live
+        # project: the sink saves all 121 reviewed case keys when it can
+        # resolve none, and not one of the ten runs resolves every key - the
+        # best manages 82. All-or-nothing therefore parked every entry,
+        # including the 82 results that would have landed, which made the
+        # recovery the sink points the operator at dead end to end.
+        #
+        # Nothing is dropped: what resolved replays, and what did not stays
+        # in the queue under its own entry, still holding its case keys.
+        replay = dict(entry)
+        replay['results'] = translated
+        replay['result_count'] = len(translated)
+        replayable.append(replay)
+
+        if complete:
             print(f'  Resolved {len(translated)} case key(s) to codes for '
                   f'run {entry.get("run_key", "?")} - replaying.')
-        else:
-            still_stale.append(entry)
+            continue
+
+        done = {r['case'] for r in translated}
+        by_code = {r.get('case_id'): r.get('code') for r in rows}
+        leftover = [r for r in entry.get('results', [])
+                    if str(r.get('case')) not in done
+                    and by_code.get(str(r.get('case'))) not in done]
+        print(f'  Resolved {len(translated)} of '
+              f'{len(entry.get("results", []))} case key(s) for run '
+              f'{entry.get("run_key", "?")} - replaying those. The other '
+              f'{len(leftover)} name cases this run does not contain, so they '
+              f'go to {UNREPLAYABLE_PATH.name}.')
+        if leftover:
+            rest = dict(entry)
+            rest['results'] = leftover
+            rest['result_count'] = len(leftover)
+            still_stale.append(rest)
     return still_stale
 
 
@@ -166,11 +196,15 @@ def _park_unreplayable(stale: list[dict]) -> None:
                                  encoding='utf-8')
     empty = [e for e in stale if not (e.get('results') or [])]
     keyed = len(stale) - len(empty)
+    # A key that did not resolve names a case the run does not contain, and a
+    # run's case set does not change, so there is no later attempt to keep it
+    # for. Parking preserves it for a human to look at.
     print(f'  [{WARN}] {len(stale)} entry(ies) cannot be replayed. Moved to '
           f'{UNREPLAYABLE_PATH.name}.')
     if keyed:
-        print(f'         {keyed} name their cases by KEY rather than code. The '
-              f'results API')
+        print(f'         {keyed} still name their cases by KEY rather than '
+              f'code, because')
+        print('         the run does not contain them. The results API')
         print('         ignores a case key and reports success anyway, so a '
               '"successful"')
         print('         retry of those would have written nothing.')

@@ -282,25 +282,36 @@ def test_an_unresolvable_key_entry_is_parked_not_replayed(tmp_path, monkeypatch,
     assert 'cannot be replayed' in capsys.readouterr().out
 
 
-def test_a_partly_resolvable_entry_is_parked_whole_not_replayed_in_part(tmp_path, monkeypatch):
-    """Replaying the resolved half would drop the rest with no trace.
+def test_a_partly_resolvable_entry_replays_what_it_can_and_parks_the_rest(
+        tmp_path, monkeypatch, capsys):
+    """Split, not all-or-nothing, and nothing dropped.
 
-    The entry then leaves the failure log having uploaded some of what it
-    held, which reads as a clean retry. Either the whole entry replays or
-    none of it does.
+    Measured against the live project: the sink saves all 121 reviewed case
+    keys when it resolves none, and not one of the ten runs resolves every
+    key - the best manages 82. All-or-nothing therefore parked every entry
+    including the 82 results that would have landed, which made the recovery
+    the sink points the operator at dead end to end.
+
+    What resolved is uploaded. What did not names a case the run does not
+    contain, and a run's case set does not change, so it is parked for a
+    human rather than queued for an attempt that cannot succeed.
     """
     client = _fake_client(monkeypatch)
     client.get_all_test_run_results.return_value = [
         {'case_id': 'RESOLVES', 'code': 'TR0262'}]      # the other key is absent
+    client.verify_results_landed.return_value = {
+        'checked': 1, 'landed': ['TR0262'], 'mismatched': [], 'missing': []}
     _write_log(tmp_path, [_entry([{'case': 'RESOLVES', 'status': 1},
                                   {'case': 'MISSING', 'status': 5}])])
 
-    assert retry.main([]) == 1
-    client.update_test_run_results_by_code.assert_not_called()
+    retry.main([])
+
+    sent = client.update_test_run_results_by_code.call_args.kwargs['results']
+    assert sent == [{'case': 'TR0262', 'status': 1}]
     parked = json.loads(
         (tmp_path / 'logs' / 'upload_failures_unreplayable.json').read_text())
-    assert len(parked) == 1
-    assert [r['case'] for r in parked[0]['results']] == ['RESOLVES', 'MISSING']
+    assert [r['case'] for r in parked[0]['results']] == ['MISSING']
+    assert 'Resolved 1 of 2' in capsys.readouterr().out
 
 
 def test_parking_appends_rather_than_overwriting(tmp_path, monkeypatch):
