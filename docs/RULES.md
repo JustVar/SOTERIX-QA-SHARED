@@ -123,7 +123,12 @@ a rootpath to `Path.cwd()`/`resolve()` without normalising both.
 ### 8. The mapping policy is injected by the shim
 
 Which mapping rows may upload is a per-repo decision, so the package holds no
-opinion. The UI gates on `reviewed`; the API does not.
+opinion. **Both consumers now gate on `reviewed`.** The API repo did not, and
+the measurement that changed it is worth keeping: of its 31 rows, the 13 the
+matcher guessed all point at UI behaviour cases ("Verify tooltip on site
+status" for an API status call), and all 7 of those cases appear in the live
+QA Touch runs, while 0 of the 5 correctly-mapped ones do. Ungated, the only
+results that would have landed were the wrong ones.
 
 - **Channel:** the shim sets `_mod.MAPPING_POLICY = <callable>` *before* the
   `sys.modules` swap. Not a constructor argument, because the reporter is built

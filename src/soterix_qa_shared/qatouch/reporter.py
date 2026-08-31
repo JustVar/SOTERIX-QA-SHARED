@@ -364,10 +364,15 @@ class QATouchReporter:
             return {}
 
         if counts.get('unreviewed'):
+            # Name the FILE, not a command. Each consumer reviews rows with
+            # its own tooling and the package cannot know which - the UI
+            # repo has a list-unreviewed CLI, the API repo does not, and a
+            # message naming a command that is not there is the one line a
+            # reader meets at the moment they want to act on it.
             log.warning(f'QA Touch: {counts["unreviewed"]} of {counts.get("total")} '
                         f'mapping row(s) are unreviewed proposals - tests on them '
-                        f'run but do NOT upload. Review: '
-                        f'python tools/qatouch_mapping.py list-unreviewed')
+                        f'run but do NOT upload. They are the rows without '
+                        f'"reviewed": true in {path}')
         return reviewed
 
     @staticmethod
