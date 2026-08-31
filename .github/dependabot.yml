@@ -1,0 +1,38 @@
+# Keeps the exact pins from going stale.
+#
+# Pinning exactly makes a build reproducible and, on its own, makes it slowly
+# wrong: no new lint rules, no security fixes, and a version so old that
+# upgrading is a project rather than a PR. Dependabot turns each bump into a
+# pull request the merge gate has to prove, so "reproducible" and "current"
+# stop being a choice.
+#
+# Monthly, not weekly: this is a QA repo with a small team, and a stream of
+# dependency PRs nobody reads is worse than none. Grouped for the same
+# reason - one PR for the test tooling, one for everything else.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      test-tooling:
+        patterns: ["pytest*", "ruff"]
+      everything-else:
+        patterns: ["*"]
+        exclude-patterns: ["pytest*", "ruff"]
+    commit-message:
+      prefix: "deps"
+
+  # The workflow files pin actions by major version (actions/checkout@v4).
+  # A pinned action still moves underneath that tag, so this catches the
+  # major bumps that a tag alone hides.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "ci"

@@ -9,18 +9,32 @@ description = "Shared QA pipeline for the Soterix QA repos: QA Touch client, a p
 requires-python = ">=3.11"
 # Base install is client-only on purpose: the UI canary job and any future
 # script consumer must not drag pytest in. The reporter extra adds it.
+#
+# RANGES, not exact pins. This is a library: two applications install it
+# alongside their own dependency sets, and an exact pin here would force a
+# conflict on any consumer that needs a different requests. The upper bound
+# is the guard a bare name lacks - it stops a future major release from
+# arriving unannounced through a routine install.
 dependencies = [
-    "requests",
+    "requests>=2.31,<3",
 ]
 
 [project.optional-dependencies]
-reporter = ["pytest"]
-jira = ["jira>=3.10"]
-# Pinned exactly, not floored. Ruff moves rules between minor releases,
-# so a floating pin makes a lint result depend on when a machine last
-# installed. Measured 2026-08-28: the UI repo had 0.16.1 and the API repo
-# 0.16.2 - same 415-rule set and both clean here, so the drift was benign
-# that day. The pin is what keeps it that way.
+# Ranges again, for the same reason: a consumer pins its own pytest, and a
+# library that disagrees is a library that cannot be installed. The floor is
+# what the reporter's hooks need; the ceiling stops a major release landing
+# through an unrelated install.
+reporter = ["pytest>=8,<10"]
+jira = ["jira>=3.10,<4"]
+# Exact, unlike the runtime deps above. Nothing installs this extra
+# alongside another project's requirements, so there is no conflict to
+# cause - and a lint tool that moves changes which findings appear, which
+# is how a change passes on one machine and fails on another with no code
+# difference. Measured 2026-08-28: the UI repo had ruff 0.16.1 and the API
+# repo 0.16.2.
+#
+# Exact pins go stale. Dependabot bumps them as PRs that CI has to prove,
+# which is what keeps "reproducible" from also meaning "frozen".
 dev = ["pytest==9.1.1", "ruff==0.16.2", "pytest-html==4.2.0"]
 
 [tool.setuptools.package-data]
