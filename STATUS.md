@@ -31,8 +31,9 @@ not drag in a test runner.
 
 ## Where it stands
 
-**Steps 1, 2a and 3 complete.** 241 tests, ruff clean, wheel builds and imports in a
-clean interpreter.
+**Steps 1 to 6 complete.** 302 tests, ruff clean, wheel builds and imports in a
+clean interpreter. Both consumers are merged to main and green on Linux CI
+against the v0.19.0 tag.
 
 | Module | Lines | What it is |
 |---|---|---|
@@ -49,13 +50,15 @@ clean interpreter.
 | `reporting.branding` | 75 | The company logo, embedded into a page |
 | `jira.fields` | 243 | Mapping test data onto discovered custom fields |
 | `jira.client` | 208 | Creating an issue, or describing the one it would create |
+| `gates.collect_floor` | 140 | Failing a run when a suite collects fewer tests than before |
 
 Two design decisions worth knowing before reading the code:
 
-**Node id is the identity, not `case_key`.** A case key is not unique (42 are
-claimed by more than one test), not always present (unmapped tests have
-none), and is QA Touch's word for a test that a Jira filer or dashboard has
-no use for. The reporter records one `RunResult` per node id; folding to
+**Node id is the identity, not `case_key`.** A case key is not unique (42 of
+the 302 distinct keys are claimed by more than one test, covering 118 of the
+378 mappings; none of the 121 reviewed mappings collide), not always present
+(unmapped tests have none), and is QA Touch's word for a test that a Jira
+filer or dashboard has no use for. The reporter records one `RunResult` per node id; folding to
 cases is the upload sink's private step.
 
 **`ResultSink` is the extension point.** Three sinks today: the local run
@@ -236,22 +239,21 @@ already reach).
 
 ## What is left
 
-Both consumers are shimmed and green, each on a branch. Merging them is a
-review, not more engineering.
+Both consumers are merged to main, pinned to `v0.19.0`, and green on Linux
+CI.
 
 | | UI repo | API repo |
 |---|---|---|
-| Branch | `shim-rehearsal` | `shim-migration` |
+| Merged at | `6a9b946` | `c85a35b` |
 | Shims | 6 | 2 |
 | Guards | 16 | 13 |
-| Suite | 618 passed, 4 skipped | 30 passed, 84 collected |
+| Collected | 1416 | 84 |
+| Floor watches | whole repo, offline suites | whole repo, internal, integration |
 
-**Before an armed upload can land in the API repo**, its 5 reviewed cases
-need to be in a QA Touch test run. They are all in the `API Integrations`
-module and appear in none of the ten runs, so an armed session today
-resolves no case codes and fails loudly rather than writing anything. That
-is QA Touch housekeeping and the naming follows a release cadence this
-document cannot infer.
+The API repo's 5 reviewed cases now have a run to land in: **PgGMv**. A dry
+run against it resolved all five codes (TR3681 to TR3685) and produced the
+exact payload, with the write intercepted. The armed upload has not been
+sent.
 
 **Still not built:** the per-interpreter shim-identity matrix, and step 2b's
 reporting stack.
