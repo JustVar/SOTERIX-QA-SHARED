@@ -382,8 +382,15 @@ class QATouchUploadSink(ResultSink):
         timestamp = datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')
         comment = f'Automated upload from Playwright run at {timestamp}'
 
+        # From the SUBMODULE, not the package namespace. Measured: with
+        # `from soterix_qa_shared.qatouch import QATouchClient`, a consumer's
+        # shim that aliases tools/qatouch_client.py to this submodule (the
+        # form docs/RULES.md prescribes) passes the identity guard while its
+        # monkeypatch never reaches here, so a test that believed it had a
+        # mock builds a REAL client against live credentials. Importing from
+        # the submodule makes the aliased path and the read path one object.
         try:
-            from soterix_qa_shared.qatouch import QATouchClient
+            from soterix_qa_shared.qatouch.client import QATouchClient
             client = QATouchClient()
         except Exception as e:
             log.error(f'QA Touch: Failed to initialize client: {e}')

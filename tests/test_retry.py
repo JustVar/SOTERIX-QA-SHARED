@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import soterix_qa_shared.qatouch as qatouch_pkg
+from soterix_qa_shared.qatouch import client as pkg_client
 from soterix_qa_shared.qatouch import retry
 
 
@@ -35,8 +35,14 @@ def _entry(results, run_key='RUN1', **kw):
 
 
 def _fake_client(monkeypatch, **attrs):
+    """Install a fake QATouchClient on the SUBMODULE the sink imports from.
+
+    Patching the package namespace would not land. That is the point: a
+    consumer's shim aliases tools/qatouch_client.py to this same submodule,
+    so the object a test patches and the object a shim patches are one.
+    """
     client = MagicMock(**attrs)
-    monkeypatch.setattr(qatouch_pkg, 'QATouchClient', MagicMock(return_value=client))
+    monkeypatch.setattr(pkg_client, 'QATouchClient', MagicMock(return_value=client))
     return client
 
 
@@ -290,7 +296,7 @@ def test_a_malformed_unreplayable_log_does_not_lose_the_new_entry(tmp_path, monk
 
 def test_an_unreachable_client_leaves_key_entries_alone(tmp_path, monkeypatch, capsys):
     """A client that cannot start is not evidence the entries are junk."""
-    monkeypatch.setattr(qatouch_pkg, 'QATouchClient',
+    monkeypatch.setattr(pkg_client, 'QATouchClient',
                         MagicMock(side_effect=RuntimeError('no credentials')))
     _write_log(tmp_path, [_entry([{'case': 'B869bm', 'status': 5}])])
 

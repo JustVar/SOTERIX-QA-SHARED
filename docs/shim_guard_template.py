@@ -10,7 +10,9 @@ back to whatever the package last set. These tests fail loudly in that case.
 
 Four things are asserted:
   1. module identity - the old import path IS the package module;
-  2. patching the old path reaches the running code;
+  2. patching the old path reaches the RUNNING code. Identity is necessary
+     and not sufficient: a shim can be the right object and still be
+     patch-dead if the package reads the name from somewhere else;
   3. the writer paths resolve inside THIS repo, not into site-packages;
   4. a module with a CLI still runs its CLI through the shim.
 
@@ -25,6 +27,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -107,6 +110,37 @@ def test_patching_the_old_path_moves_the_run_record(monkeypatch, tmp_path):
         'patching the old import path did not reach the writer - the shim is '
         'not an alias, or the module froze its path at import time.')
     assert json.loads(target.read_text())['run_key'] == 'rk-shim-guard'
+
+
+def test_patching_the_old_client_path_reaches_the_upload(monkeypatch, tmp_path):
+    """The seam identity alone cannot see.
+
+    The upload sink imports its client at call time. If it imported from the
+    package namespace while this shim aliases the submodule, `shim_client is
+    pkg_client` would still PASS while this patch reached nothing - and the
+    sink would build a REAL client against whatever credentials the repo's
+    .env holds, then talk to the live QA Touch project. Measured: identity
+    True, patch landed False, upload silently attempted for real.
+
+    So identity is necessary and not sufficient. This is the sufficient one.
+    """
+    fake = MagicMock()
+    fake.get_all_test_run_results.return_value = [{'case_id': 'K1', 'code': 'TR0001'}]
+    fake.verify_results_landed.return_value = {
+        'checked': 1, 'landed': ['TR0001'], 'mismatched': [], 'missing': []}
+    monkeypatch.setattr(shim_client, 'QATouchClient', MagicMock(return_value=fake))
+
+    sink = QATouchUploadSink(run_key='rk-shim-guard',
+                             failure_log_path=tmp_path / 'failures.json')
+    sink.finish([RunResult(nodeid='tests/x.py::test_y', outcome='passed',
+                           case_key='K1')], None)
+
+    assert fake.update_test_run_results_by_code.called, (
+        'patching QATouchClient on the old import path did not reach the '
+        'upload sink. The sink builds a real client, so an armed run would '
+        'talk to the live QA Touch project. Check that the sink imports the '
+        'client from the same module this shim aliases.')
+    assert sink.stats['uploaded'] == 1
 
 
 def test_patching_the_old_path_moves_the_failure_log(monkeypatch, tmp_path):

@@ -133,6 +133,28 @@ def test_setting_the_path_directly_still_reloads(tmp_path, discovered):
     assert jf.get_required_field_ids('Bug') == {}
 
 
+def test_configure_resets_the_singleton_too(tmp_path, discovered):
+    """`fields.mapper` is the whole consumer surface: both consumers import
+    it and nothing else. It holds a per-issue-type cache of its own, so
+    clearing only the module globals left it answering from the previous
+    project - measured, `get_required_field_ids` reported Severity as
+    required while `mapper.get_unmapped_required_fields` returned []. A
+    tester would be told nothing was missing."""
+    assert jf.mapper.get_unmapped_required_fields('Bug', {})      # warms it
+    other = tmp_path / 'other.json'
+    other.write_text(json.dumps({'issue_types': {'Bug': {'fields': {
+        'cf_only': {'name': 'Root Cause', 'required': True}}}}}), encoding='utf-8')
+    jf.configure(other)
+    assert jf.mapper.get_unmapped_required_fields('Bug', {}) == ['Root Cause (cf_only)']
+
+
+def test_reset_cache_alone_also_resets_the_singleton(discovered):
+    assert jf.mapper.get_unmapped_required_fields('Bug', {})
+    discovered.write_text(json.dumps({'issue_types': {}}), encoding='utf-8')
+    jf.reset_cache()
+    assert jf.mapper.get_unmapped_required_fields('Bug', {}) == []
+
+
 def test_configure_to_a_new_path_reloads(tmp_path, discovered):
     other = tmp_path / 'other.json'
     other.write_text(json.dumps({'issue_types': {}}), encoding='utf-8')

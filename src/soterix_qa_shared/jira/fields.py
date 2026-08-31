@@ -33,10 +33,23 @@ def configure(path: Path | str) -> None:
 
 
 def reset_cache() -> None:
-    """Forget the loaded file. Call after a discovery run rewrites it."""
+    """Forget the loaded file. Call after a discovery run rewrites it.
+
+    This also resets the module singleton, which holds its own per-issue-type
+    cache. Clearing only the module globals left `mapper` answering from the
+    previous project: measured, after switching to a project whose Bug
+    requires Severity, `get_required_field_ids` correctly reported it while
+    `mapper.get_unmapped_required_fields` still returned []. The singleton is
+    the whole consumer surface - both consumers import it and nothing else -
+    so a tester would be told nothing was missing and the create would be
+    rejected by Jira, or filed incomplete.
+    """
     global _CACHE, _CACHE_KEY
     _CACHE = None
     _CACHE_KEY = None
+    singleton = globals().get('mapper')      # defined below; absent at import
+    if singleton is not None:
+        singleton.reset()
 
 
 QA_TOUCH_TO_JIRA_STATUS = {

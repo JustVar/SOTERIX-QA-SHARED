@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import soterix_qa_shared.qatouch as qatouch_pkg
+from soterix_qa_shared.qatouch import client as pkg_client
 from soterix_qa_shared.qatouch import upload as up
 from soterix_qa_shared.qatouch.results import RunResult
 from soterix_qa_shared.qatouch.upload import QATouchUploadSink
@@ -41,9 +41,14 @@ def _sink(tmp_path, **kw):
 
 
 def _fake_client(monkeypatch, **attrs):
-    """Install a fake QATouchClient on the package the sink imports from."""
+    """Install a fake QATouchClient on the SUBMODULE the sink imports from.
+
+    Patching the package namespace would not land. That is the point: a
+    consumer's shim aliases tools/qatouch_client.py to this same submodule,
+    so the object a test patches and the object a shim patches are one.
+    """
     client = MagicMock(**attrs)
-    monkeypatch.setattr(qatouch_pkg, 'QATouchClient', MagicMock(return_value=client))
+    monkeypatch.setattr(pkg_client, 'QATouchClient', MagicMock(return_value=client))
     return client
 
 

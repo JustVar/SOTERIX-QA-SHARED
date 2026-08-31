@@ -110,7 +110,9 @@ def _load_failures() -> tuple[list | None, int]:
 def _resolve_stale(stale: list[dict], replayable: list[dict]) -> list[dict]:
     """Turn key-based entries into code-based ones where the run allows."""
     try:
-        from soterix_qa_shared.qatouch import QATouchClient
+        # From the submodule, so a consumer shim aliased to it stays
+        # patchable. See the note in upload.py.
+        from soterix_qa_shared.qatouch.client import QATouchClient
         client = QATouchClient()
     except Exception as e:
         print(f'  [{WARN}] could not resolve key-based entries: {e}')
@@ -208,7 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if stale else 0
 
     try:
-        from soterix_qa_shared.qatouch import QATouchClient
+        # From the submodule, so a consumer shim aliased to it stays
+        # patchable. See the note in upload.py.
+        from soterix_qa_shared.qatouch.client import QATouchClient
         client = QATouchClient()
     except Exception as e:
         print(f'  [{FAIL}] Cannot initialize QA Touch client: {e}')
