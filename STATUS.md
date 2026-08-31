@@ -68,14 +68,14 @@ every session that ran a test and the ledger only on armed ones.
 
 | Step | State | What |
 |---|---|---|
-| 0 | mostly | Repo, CI, interpreter range done. PAT and shim matrix open |
+| 0 | mostly | Repo, CI, interpreter range, deploy key done. Shim matrix open |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
 | 3 | **done** | Jira layer |
-| 4 | next | Shims + guards, then tag |
-| 5 | | Migrate the API repo (5a pin, 5b shims) |
-| 6 | | Migrate the UI repo (6a pin, 6b shims) |
+| 4 | **done** | Shims + guards, tagged **v0.16.0** |
+| 5 | 5a done | API repo: pin landed; 5b shims next |
+| 6 | 6a done | UI repo: pin landed; shims proven on a branch |
 | 7 | | Docs |
 
 **0. The guards later steps depend on.** The package's CI is in place
@@ -115,11 +115,18 @@ drifted to 0.16.1 (UI) and 0.16.2 (API). Benign when measured (identical
 when a machine last installed. Steps 5a and 6a touch both requirements files
 anyway.
 
-*Provision the read-only PAT under the same secret name in both orgs now.*
-Step 5a lands a private pin that the API merge gate installs on every PR;
-without the credential that PR turns the repo's only gate red.
+*The credential is provisioned, and it is not a PAT.* A read-only DEPLOY KEY
+on `SOTERIX-QA-SHARED`, its private half held as `QA_SHARED_DEPLOY_KEY` in
+both consumers. A deploy key does not expire, which a PAT does - and this
+org has already lost a secret that way. Proved on all three properties
+before anything was wired to it: it reads the shared repo, a push is
+refused, and it cannot see either consumer.
 
-Do **not** tag yet.
+**Tagged: v0.16.0.** Cut from a pristine clone, not the working tree. The
+wheel builds, all 16 modules import under a base install, `py.typed` ships,
+and the reporter refuses to import without its extra while naming `pytest` -
+which is what rule 2's shim guard branches on. The UI repo's 16 shim guards
+and its 618 offline tests pass against that wheel.
 
 **1. Remaining.** One live upload, to verify the two API-repo behaviours
 that unification fixes: its run-key identifier and case_key fallback are the
