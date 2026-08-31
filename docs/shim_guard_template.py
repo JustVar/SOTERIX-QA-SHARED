@@ -21,6 +21,12 @@ one (the UI repo gates on `reviewed`; the API repo does not).
 """
 from __future__ import annotations
 
+# This file imports AFTER inserting the repo root on sys.path, which it has
+# to: the shims under test live in plugins/ and tools/, and pytest may not
+# have put the root there. E402 and the import-sort rule both object, and
+# both are wrong here.
+# ruff: noqa: E402, I001
+
 import json
 import os
 import subprocess
@@ -64,17 +70,20 @@ def _real(p) -> Path:
 # --- 1. module identity -----------------------------------------------------
 
 def test_reporter_shim_is_the_package_module():
+    """The reporter's old import path IS the package module, not a copy."""
     assert shim_reporter is pkg_reporter, (
         'plugins.qatouch_reporter is not the package module. A star-import or '
         'a copied file leaves every monkeypatch seam pointing at a dead object.')
 
 
 def test_client_shim_is_the_package_module():
+    """The client's old import path IS the package module, not a copy."""
     assert shim_client is pkg_client, (
         'tools.qatouch_client is not the package module.')
 
 
 def test_retry_shim_is_the_package_module():
+    """The retry CLI's old import path IS the package module, not a copy."""
     assert shim_retry is pkg_retry, (
         'tools.retry_uploads is not the package module.')
 
@@ -144,6 +153,7 @@ def test_patching_the_old_client_path_reaches_the_upload(monkeypatch, tmp_path):
 
 
 def test_patching_the_old_path_moves_the_failure_log(monkeypatch, tmp_path):
+    """Patching the failure-log path on the old module reaches the sink."""
     target = tmp_path / 'upload_failures.json'
     monkeypatch.setattr(shim_reporter, 'FAILURE_LOG_PATH', target)
 
@@ -161,6 +171,7 @@ def test_patching_the_old_path_moves_the_failure_log(monkeypatch, tmp_path):
     'HISTORY_DIR',
 ])
 def test_writer_paths_resolve_inside_this_repo(name):
+    """Every path the package writes to lands in this repo, not site-packages."""
     value = getattr(pkg_reporter, name)
     assert value is not None, (
         f'{name} is None - reporter.configure(root) never ran. The plugin '
@@ -185,7 +196,7 @@ def test_the_module_globals_are_read_at_call_time(monkeypatch, tmp_path):
     """Rule 6: a recompute-from-ROOT accessor ignores the patch, writes into
     the real repo, and the test that thought it was isolated still passes."""
     monkeypatch.setattr(shim_reporter, 'RUN_RESULTS_PATH', tmp_path / 'x.json')
-    assert pkg_reporter.RUN_RESULTS_PATH == tmp_path / 'x.json'
+    assert pkg_reporter.RUN_RESULTS_PATH == tmp_path / 'x.json'  # noqa: SIM300
 
 
 # --- 4. a CLI still runs through its shim -----------------------------------
@@ -216,6 +227,7 @@ def test_the_retry_cli_actually_runs_through_the_shim():
 #   * The API repo has no gate: every mapped row uploads.
 
 def test_the_injected_policy_is_this_repos_gate(tmp_path):
+    """The shim injected THIS repo's mapping policy, not a permissive default."""
     policy = pkg_reporter.MAPPING_POLICY
     assert policy is not None, (
         'no MAPPING_POLICY injected - the shim must set it before it swaps '

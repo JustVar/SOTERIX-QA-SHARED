@@ -63,6 +63,27 @@ def test_format_duration_matches_the_vendor_reporter():
     assert up.format_duration(-1) == ''
 
 
+def test_the_upload_path_label_starts_as_none(tmp_path):
+    """The terminal summary reads this. Before an upload it must say
+    "(none)" rather than claim a path that was never taken. Carried over
+    from the UI repo's reporter suite, which the package now replaces."""
+    assert _sink(tmp_path).upload_path_used == '(none)'
+
+
+def test_the_upload_path_label_names_the_endpoint_used(monkeypatch, tmp_path):
+    s, _ = _playwright_sink(monkeypatch, tmp_path)
+    s.finish([_r('t::a', 'passed', case_key='B869bm')], None)
+    assert s.upload_path_used == 'playwright'
+
+
+def test_the_upload_path_label_records_a_failure_to_resolve(monkeypatch, tmp_path):
+    fake = _fake_client(monkeypatch)
+    fake.get_all_test_run_results.side_effect = RuntimeError('HTTP 429')
+    s = _sink(tmp_path)
+    s.finish([_r('t::a', 'passed', case_key='B869bm')], None)
+    assert s.upload_path_used == 'failed (no case codes)'
+
+
 # ---------------------------------------------------------------------------
 # Case-code resolution
 # ---------------------------------------------------------------------------
