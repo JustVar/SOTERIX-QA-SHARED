@@ -31,9 +31,9 @@ not drag in a test runner.
 
 ## Where it stands
 
-**Steps 1 to 6 complete.** 302 tests, ruff clean, wheel builds and imports in a
+**Steps 1 to 6 complete.** 317 tests, ruff clean, wheel builds and imports in a
 clean interpreter. Both consumers are merged to main and green on Linux CI
-against the v0.19.0 tag.
+against the v0.20.0 tag.
 
 | Module | Lines | What it is |
 |---|---|---|
@@ -250,10 +250,15 @@ CI.
 | Collected | 1416 | 84 |
 | Floor watches | whole repo, offline suites | whole repo, internal, integration |
 
-The API repo's 5 reviewed cases now have a run to land in: **PgGMv**. A dry
-run against it resolved all five codes (TR3681 to TR3685) and produced the
-exact payload, with the write intercepted. The armed upload has not been
-sent.
+**The pipeline is proven end to end.** Two armed runs landed in QA Touch
+run **PgGMv** on 08/31, and the run was read back independently rather than
+trusting the upload's own answer: TR3681 to TR3685 all read Passed.
+
+The first run selected `tests/integration_api` and set four of the five
+cases, because the fifth maps to a test in `tests/internal_api`. Nothing in
+the output said so, which is why `verify_results_landed` now reports run
+coverage. The same run also wrote absolute paths into the ledger, fixed in
+v0.20.0.
 
 **Still not built:** the per-interpreter shim-identity matrix, and step 2b's
 reporting stack.
