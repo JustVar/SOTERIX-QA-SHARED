@@ -180,8 +180,10 @@ still be cleaned.
 
 **Cross-repo:** exactly one shared key across 409 rows, `WEnvKQ` (API
 `test_get_site_status`; UI `test_admin_sites.py::test_check_site_status`).
-**Dormant**. The UI row is `reviewed: false` and the UI gates on reviewed.
-Live only if someone reviews it. Hygiene, not a migration blocker.
+**Dormant on both sides now.** Both rows are unreviewed and both repos gate
+on reviewed, and the API row is one of the 13 its matcher guessed. Measured
+after the API gate landed: the set of case keys both repos would upload is
+empty.
 
 **The duplicate checker is a DESIGN, not a thing that exists.** No console
 script, no CI job, nothing. When it is built: a console script taking N
