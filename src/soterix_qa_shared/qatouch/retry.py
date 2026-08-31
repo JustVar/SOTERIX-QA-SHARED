@@ -57,9 +57,18 @@ def configure(root: Path | str) -> None:
 
 
 def _replayable(entry: dict) -> bool:
-    """True when every result identifies its case by code (TR0263)."""
-    return all(CASE_CODE_RE.match(str(r.get('case', '')))
-               for r in entry.get('results', []))
+    """True when the entry HAS results and every one names a case code.
+
+    The emptiness check is not defensive tidying. `all([])` is True, so an
+    entry with no results counted as replayable: measured, the CLI POSTed an
+    empty payload, read back zero results, found no problems, printed "All 1
+    retries succeeded and verified" and deleted the log. That is trap 3 -
+    an empty payload verifying trivially - which upload.py exists to close
+    and which was wide open here.
+    """
+    rows = entry.get('results') or []
+    return bool(rows) and all(
+        CASE_CODE_RE.match(str(r.get('case', ''))) for r in rows)
 
 
 def translate_keys_to_codes(entry: dict, run_rows: list[dict]) -> tuple[bool, list[dict]]:
@@ -155,11 +164,22 @@ def _park_unreplayable(stale: list[dict]) -> None:
             existing = []
     UNREPLAYABLE_PATH.write_text(json.dumps(existing + stale, indent=2),
                                  encoding='utf-8')
-    print(f'  [{WARN}] {len(stale)} entry(ies) use case keys instead of case '
-          f'codes and cannot be replayed. Moved to {UNREPLAYABLE_PATH.name}.')
-    print('         The results API ignores case keys and reports success '
-          'anyway, so a')
-    print('         "successful" retry of these would have written nothing.')
+    empty = [e for e in stale if not (e.get('results') or [])]
+    keyed = len(stale) - len(empty)
+    print(f'  [{WARN}] {len(stale)} entry(ies) cannot be replayed. Moved to '
+          f'{UNREPLAYABLE_PATH.name}.')
+    if keyed:
+        print(f'         {keyed} name their cases by KEY rather than code. The '
+              f'results API')
+        print('         ignores a case key and reports success anyway, so a '
+              '"successful"')
+        print('         retry of those would have written nothing.')
+    if empty:
+        print(f'         {len(empty)} hold no results at all. An empty upload '
+              f'is accepted,')
+        print('         verifies against nothing, and would clear the entry '
+              'having sent')
+        print('         nothing.')
     print()
 
 
@@ -227,6 +247,14 @@ def main(argv: list[str] | None = None) -> int:
         results = [{'case': r['case'], 'status': r['status']}
                    for r in entry.get('results', [])]
         comment = entry.get('comment', 'Retry upload')
+
+        if not results:
+            # Belt and braces with _replayable: an empty POST is accepted,
+            # verifies against nothing, and would clear the entry.
+            print(f'  {i}. Run {run_key} holds no results - keeping it rather '
+                  f'than sending an empty upload.')
+            remaining.append(entry)
+            continue
 
         print(f'  {i}. Retrying run {run_key} ({len(results)} results)... ', end='')
         try:

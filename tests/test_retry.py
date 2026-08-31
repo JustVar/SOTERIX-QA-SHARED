@@ -112,6 +112,40 @@ def test_a_mixed_entry_is_not_replayable():
                                          {'case': 'B869bm', 'status': 5}]))
 
 
+def test_an_entry_with_no_results_is_not_replayable():
+    """`all([])` is True. Measured before this: the CLI POSTed an empty
+    payload, read back zero results, found no problems, printed "All 1
+    retries succeeded and verified" and deleted the log. That is trap 3,
+    the empty payload that verifies trivially."""
+    assert not retry._replayable(_entry([]))
+    assert not retry._replayable({'run_key': 'RUN1'})          # no results key
+
+
+def test_an_empty_entry_is_never_posted_and_is_preserved(tmp_path, monkeypatch, capsys):
+    """It cannot be replayed, so it is parked rather than sent. The entry
+    survives in the unreplayable file - unreplayable is not the same as
+    disposable."""
+    client = _fake_client(monkeypatch, get_all_test_run_results=MagicMock(return_value=[]))
+    _write_log(tmp_path, [_entry([])])
+    assert retry.main([]) == 1
+    client.update_test_run_results_by_code.assert_not_called()
+    parked = json.loads(
+        (tmp_path / 'logs' / 'upload_failures_unreplayable.json').read_text())
+    assert len(parked) == 1
+    assert 'hold no results at all' in capsys.readouterr().out
+
+
+def test_the_parked_message_names_the_real_reason(tmp_path, monkeypatch, capsys):
+    """An empty entry is not a key-based entry. Telling an operator the
+    wrong reason sends them to look at the wrong thing."""
+    _fake_client(monkeypatch, get_all_test_run_results=MagicMock(return_value=[]))
+    _write_log(tmp_path, [_entry([]), _entry([{'case': 'B869bm', 'status': 5}])])
+    retry.main([])
+    out = capsys.readouterr().out
+    assert 'hold no results at all' in out
+    assert 'name their cases by KEY' in out
+
+
 def test_translate_uses_the_runs_own_rows():
     entry = _entry([{'case': 'B869bm', 'status': 1}, {'case': 'TR0263', 'status': 5}])
     rows = [{'case_id': 'B869bm', 'code': 'TR0262'}]

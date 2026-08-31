@@ -213,3 +213,47 @@ def test_by_code_raises_when_the_body_says_not_successful(client):
     client.session = _Recorder(payload={"success": False, "error_msg": "bad run key"})
     with pytest.raises(QATouchError, match="bad run key"):
         client.update_test_run_results_by_code("JlW1", "vaQly", RESULTS)
+
+
+# ---------------------------------------------------------------------------
+# verify_results_landed is the one guard the whole upload path trusts
+# ---------------------------------------------------------------------------
+
+def _verifier(run_status='Untested'):
+    from unittest.mock import MagicMock
+    c = QATouchClient(api_key='k', domain='d')
+    c.get_all_test_run_results = MagicMock(
+        return_value=[{'code': 'TR0001', 'status': run_status}])
+    return c
+
+
+def test_verify_reports_a_real_mismatch():
+    r = _verifier().verify_results_landed('P', 'RUN', [{'case': 'TR0001', 'status': 5}])
+    assert r['landed'] == [] and len(r['mismatched']) == 1
+
+
+def test_verify_reports_a_real_landing():
+    r = _verifier('Failed').verify_results_landed('P', 'RUN', [{'case': 'TR0001', 'status': 5}])
+    assert r['landed'] == ['TR0001'] and r['mismatched'] == []
+
+
+def test_verify_reports_a_code_absent_from_the_run():
+    r = _verifier().verify_results_landed('P', 'RUN', [{'case': 'TR9999', 'status': 5}])
+    assert r['missing'] == ['TR9999']
+
+
+@pytest.mark.parametrize('status', [0, 99, -1, 'five', '', None])
+def test_a_status_this_client_cannot_name_is_never_landed(status):
+    """Measured before this: status 0, an unknown code and a missing key all
+    reported LANDED while the run still read Untested, and None raised
+    TypeError. A status the client cannot name is a status it cannot check,
+    so it is a mismatch - the retry CLI replays whatever is on disk."""
+    r = _verifier().verify_results_landed('P', 'RUN', [{'case': 'TR0001', 'status': status}])
+    assert r['landed'] == []
+    assert len(r['mismatched']) == 1
+    assert 'cannot be checked' in r['mismatched'][0]
+
+
+def test_a_missing_status_key_is_never_landed():
+    r = _verifier().verify_results_landed('P', 'RUN', [{'case': 'TR0001'}])
+    assert r['landed'] == [] and len(r['mismatched']) == 1

@@ -834,11 +834,24 @@ class QATouchClient:
         landed, mismatched, missing = [], [], []
         for entry in results:
             code = str(entry.get('case', ''))
-            want = STATUS_NAMES.get(int(entry.get('status', 0)))
+            try:
+                want = STATUS_NAMES.get(int(entry.get('status')))
+            except (TypeError, ValueError):
+                want = None
             got = by_code.get(code)
             if got is None:
                 missing.append(code)
-            elif want and normalize_status_name(got) != normalize_status_name(want):
+            elif want is None:
+                # A status this client cannot name is a status it cannot
+                # check. Counting it as landed was a hole in the one guard
+                # the upload path trusts: measured, a status of 0, an
+                # unknown code, or a missing key all reported LANDED while
+                # the run still read Untested. The reporter can only send
+                # 1, 3 or 5, but the retry CLI replays whatever is on disk.
+                mismatched.append(
+                    f'{code}: sent status {entry.get("status")!r}, which is '
+                    f'not a QA Touch status, so the run cannot be checked')
+            elif normalize_status_name(got) != normalize_status_name(want):
                 mismatched.append(f'{code}: sent {want}, run shows {got}')
             else:
                 landed.append(code)
