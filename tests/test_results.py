@@ -6,6 +6,7 @@ id, and folding to QA Touch case keys is one sink's private step.
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 from soterix_qa_shared.qatouch.artifacts import (
@@ -19,6 +20,7 @@ from soterix_qa_shared.qatouch.results import (
     RunResultsFileSink,
     collapse_to_cases,
     merge_reruns,
+    relative_target,
     worse_outcome,
 )
 from soterix_qa_shared.qatouch.upload import (
@@ -268,6 +270,68 @@ def test_run_record_write_failure_never_raises(tmp_path):
     sink.finish([_r('t::a', 'passed')], _ctx())   # no raise
     assert sink.error is not None
     assert 'NOT written' in sink.summary()[0]
+
+
+# ---------------------------------------------------------------------------
+# Targets, made comparable across machines
+# ---------------------------------------------------------------------------
+
+def test_an_absolute_target_is_stored_relative_to_the_root(tmp_path):
+    """Measured on a real armed run: the ledger recorded
+    'C:/Users/<name>/Soterix/qa/Soterix-API-QA/tests'. The file is committed
+    and read by other people, so that row named a directory none of them
+    have and carried a home directory into a shared repo."""
+    (tmp_path / 'tests').mkdir()
+    assert relative_target([str(tmp_path / 'tests')], tmp_path) == ('tests',)
+
+
+def test_a_relative_target_is_left_alone(tmp_path):
+    (tmp_path / 'tests').mkdir()
+    assert relative_target(['tests'], tmp_path) == ('tests',)
+
+
+def test_two_spellings_of_one_run_record_the_same_target(tmp_path):
+    """The point of the whole function: the ledger groups by target, so the
+    same suite run two ways has to produce one string."""
+    (tmp_path / 'tests').mkdir()
+    assert (relative_target([str(tmp_path / 'tests')], tmp_path)
+            == relative_target(['tests'], tmp_path))
+
+
+def test_a_node_id_keeps_its_test_name(tmp_path):
+    """The :: part is the identity the rest of the pipeline uses."""
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_a.py').write_text('', encoding='utf-8')
+    arg = str(tmp_path / 'tests' / 'test_a.py') + '::TestX::test_y[chromium]'
+    assert relative_target([arg], tmp_path) == (
+        'tests/test_a.py::TestX::test_y[chromium]',)
+
+
+def test_a_path_outside_the_root_is_passed_through(tmp_path):
+    """Guessing at it would be worse than recording what was asked for."""
+    other = tmp_path.parent / 'somewhere-else'
+    assert relative_target([str(other)], tmp_path) == (str(other),)
+
+
+def test_a_non_path_argument_is_passed_through(tmp_path):
+    assert relative_target(['not-a-path-expression'], tmp_path) == (
+        'not-a-path-expression',)
+
+
+def test_no_targets_stays_empty(tmp_path):
+    """Bare pytest. The ledger reads an empty target as 'the whole repo'."""
+    assert relative_target([], tmp_path) == ()
+def test_windows_separators_are_recorded_as_posix(tmp_path):
+    """A native separator would make the same run read one way on
+    Windows and another on Linux, and no single jq query would find
+    both. os.sep is used rather than a literal so this test says what it
+    means on either platform."""
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'ui').mkdir()
+    recorded = relative_target([str(tmp_path / 'tests' / 'ui')], tmp_path)[0]
+    assert recorded == 'tests/ui'
+    if os.sep != '/':
+        assert os.sep not in recorded
 
 
 # ---------------------------------------------------------------------------

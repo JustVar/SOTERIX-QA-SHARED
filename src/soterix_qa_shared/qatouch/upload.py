@@ -101,6 +101,10 @@ class QATouchUploadSink(ResultSink):
         self.stats = {'uploaded': 0, 'errors': 0, 'retries': 0,
                       'saved_for_retry': 0}
         self.upload_path_used = '(none)'
+        # Filled by the read-back. None means no verification ran, which
+        # is not the same as a run with no cases, so summary() stays quiet.
+        self.run_case_count: int | None = None
+        self.uncovered_cases: list[str] = []
 
     # -- resolution ---------------------------------------------------------
 
@@ -295,6 +299,11 @@ class QATouchUploadSink(ResultSink):
             log.error(f'QA Touch: {len(problems)} result(s) did not land. '
                       f'First few: {problems[:5]}')
             return False
+        # Kept for summary(). "Did my write land" and "is the run
+        # finished" are different questions, and only the first was ever
+        # answered out loud.
+        self.run_case_count = report.get('in_run')
+        self.uncovered_cases = list(report.get('uncovered') or ())
         log.info(f'QA Touch: verified {len(report["landed"])} result(s) in the run.')
         return True
 
@@ -523,6 +532,16 @@ class QATouchUploadSink(ResultSink):
         if shared:
             lines.append(f'  Shared:     {len(shared)} case(s) cover more than '
                          f'one test; the worst status won')
+        if self.run_case_count:
+            set_here = self.run_case_count - len(self.uncovered_cases)
+            lines.append(f'  Run coverage: {self.run_case_count} case(s) in '
+                         f'{self.run_key}; this run set {set_here}')
+            if self.uncovered_cases:
+                shown = ', '.join(self.uncovered_cases[:5])
+                more = (f' (+{len(self.uncovered_cases) - 5} more)'
+                        if len(self.uncovered_cases) > 5 else '')
+                lines.append(f'  Not covered: {shown}{more} - no selected '
+                             f'test maps to these')
         if self.stats['retries']:
             lines.append(f'  Retries:    {self.stats["retries"]}')
         if self.stats['errors']:

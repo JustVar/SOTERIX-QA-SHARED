@@ -456,6 +456,50 @@ def test_summary_names_the_cases_that_cover_more_than_one_test(tmp_path):
     assert '1 case(s) cover more than one test' in text
 
 
+def test_summary_reports_a_run_the_upload_did_not_finish(tmp_path):
+    """The gap this closes. On the first real armed run the summary said
+    'Uploaded: 4 results' and stopped, over a run that still held an
+    Untested case. Every check was green and the run was not done."""
+    s = _sink(tmp_path)
+    s.run_case_count = 5
+    s.uncovered_cases = ['TR3685']
+    text = '\n'.join(s.summary())
+    assert '5 case(s) in RUN1; this run set 4' in text
+    assert 'TR3685' in text
+
+
+def test_summary_reports_full_coverage_too(tmp_path):
+    """Stated on every run, not only the bad ones: a reader should not have
+    to know that silence means success."""
+    s = _sink(tmp_path)
+    s.run_case_count = 5
+    s.uncovered_cases = []
+    text = '\n'.join(s.summary())
+    assert '5 case(s) in RUN1; this run set 5' in text
+    assert 'Not covered' not in text
+
+
+def test_summary_caps_a_long_uncovered_list(tmp_path):
+    """A run with 200 cases and one selected test must not print 199 codes."""
+    s = _sink(tmp_path)
+    s.run_case_count = 200
+    s.uncovered_cases = [f'TR{n}' for n in range(199)]
+    line = next(x for x in s.summary() if 'Not covered' in x)
+    assert '+194 more' in line
+    # The counter alone does not pin the cap: a version that printed
+    # every code and appended the count passed this test until the two
+    # assertions below were added.
+    assert line.count('TR') == 5
+    assert len(line) < 120
+
+
+def test_summary_stays_quiet_when_no_read_back_ran(tmp_path):
+    """No verification is not the same as a run holding no cases, and
+    guessing 'this run set 0' would read as a failure that did not happen."""
+    s = _sink(tmp_path)
+    assert 'Run coverage' not in '\n'.join(s.summary())
+
+
 def test_summary_says_nothing_about_sharing_when_nothing_is_shared(tmp_path):
     s = _sink(tmp_path)
     s.case_nodeids = {'K1': ['t::a']}

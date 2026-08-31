@@ -237,6 +237,48 @@ def test_verify_reports_a_real_landing():
     assert r['landed'] == ['TR0001'] and r['mismatched'] == []
 
 
+def _run_of(*codes, status='Untested'):
+    """A client whose run holds exactly these case codes."""
+    from unittest.mock import MagicMock
+    c = QATouchClient(api_key='k', domain='d')
+    c.get_all_test_run_results = MagicMock(
+        return_value=[{'code': code, 'status': status} for code in codes])
+    return c
+
+
+def test_verify_names_the_cases_the_upload_said_nothing_about():
+    """The real PgGMv run. Five cases, four set, every check green, and the
+    run still held an Untested case because the selected tests did not
+    cover it. Nothing in the output said so."""
+    client = _run_of('TR3681', 'TR3682', 'TR3683', 'TR3684', 'TR3685',
+                     status='Passed')
+    sent = [{'case': c, 'status': 1}
+            for c in ('TR3681', 'TR3682', 'TR3683', 'TR3684')]
+    r = client.verify_results_landed('P', 'PgGMv', sent)
+    assert r['landed'] == ['TR3681', 'TR3682', 'TR3683', 'TR3684']
+    assert r['mismatched'] == [] and r['missing'] == []
+    assert r['in_run'] == 5
+    assert r['uncovered'] == ['TR3685']
+
+
+def test_verify_reports_no_shortfall_when_the_run_is_covered():
+    client = _run_of('TR1', 'TR2', status='Passed')
+    r = client.verify_results_landed('P', 'RUN', [{'case': 'TR1', 'status': 1},
+                                                 {'case': 'TR2', 'status': 1}])
+    assert r['in_run'] == 2
+    assert r['uncovered'] == []
+
+
+def test_a_code_absent_from_the_run_is_not_counted_as_uncovered():
+    """'missing' and 'uncovered' are opposite errors: a code sent that the
+    run does not hold, and a case the run holds that was not sent. Mixing
+    them would report a typo as a coverage gap."""
+    r = _run_of('TR1').verify_results_landed(
+        'P', 'RUN', [{'case': 'TR9999', 'status': 5}])
+    assert r['missing'] == ['TR9999']
+    assert r['uncovered'] == ['TR1']
+
+
 def test_verify_reports_a_code_absent_from_the_run():
     r = _verifier().verify_results_landed('P', 'RUN', [{'case': 'TR9999', 'status': 5}])
     assert r['missing'] == ['TR9999']

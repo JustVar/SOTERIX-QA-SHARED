@@ -822,7 +822,9 @@ class QATouchClient:
                  [{"case": "TR0263", "status": 1}, ...]
 
         Returns {"checked": n, "landed": [...codes], "mismatched": [...],
-                 "missing": [...codes not in the run]}.
+                 "missing": [...codes not in the run],
+                 "in_run": how many cases the run holds,
+                 "uncovered": [...codes in the run this upload did not set]}.
 
         This exists because the results endpoints answer success for writes
         they discard. Every uploader in the repo calls this after writing;
@@ -855,8 +857,19 @@ class QATouchClient:
                 mismatched.append(f'{code}: sent {want}, run shows {got}')
             else:
                 landed.append(code)
+        # Cases the run holds that this upload said nothing about. The rows
+        # are already fetched, so this costs nothing, and it is the only
+        # thing here that answers "is the run finished" rather than "did my
+        # write land". Measured on the first real armed run: 4 of 5 results
+        # landed, every check passed, and the run still held an Untested
+        # case because the selected tests did not cover it. The summary
+        # looked complete.
+        sent = {str(e.get('case', '')) for e in results}
+        uncovered = sorted(code for code in by_code
+                           if code and code not in sent)
         return {'checked': len(results), 'landed': landed,
-                'mismatched': mismatched, 'missing': missing}
+                'mismatched': mismatched, 'missing': missing,
+                'in_run': len(by_code), 'uncovered': uncovered}
 
     def update_test_run_results_by_code(
         self,

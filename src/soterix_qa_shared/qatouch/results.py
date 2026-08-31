@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -103,6 +104,33 @@ class RunContext:
     def armed(self) -> bool:
         """True when this session was uploading to QA Touch."""
         return self.run_key is not None
+
+
+def relative_target(args: Sequence[str], root: Path | str) -> tuple[str, ...]:
+    """pytest's positional args, rewritten relative to the repo root.
+
+    The ledger is committed and read by other people on other machines, so a
+    target has to mean the same thing everywhere. Stored verbatim, the same
+    full-suite run records `tests` for one developer and
+    `C:/Users/<name>/.../tests` for another, which breaks every query that
+    groups by target and writes somebody's home directory into a shared
+    file.
+
+    A node id keeps its `::` part, because that is the identity the rest of
+    this pipeline is built on. Anything that is not a path under the root -
+    a `-k` expression that reached args, a path outside the checkout - is
+    passed through untouched rather than guessed at.
+    """
+    out: list[str] = []
+    for arg in args:
+        head, sep, tail = arg.partition('::')
+        try:
+            rel = Path(head).resolve().relative_to(Path(root).resolve())
+        except (ValueError, OSError):
+            out.append(arg)          # not under the root, or not a path
+            continue
+        out.append(rel.as_posix() + sep + tail)
+    return tuple(out)
 
 
 def git_info(root: Path | str) -> tuple[str | None, str | None]:

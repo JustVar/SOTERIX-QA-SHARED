@@ -55,6 +55,7 @@ from soterix_qa_shared.qatouch.results import (
     RunResultsFileSink,
     git_info,
     merge_reruns,
+    relative_target,
     worse_outcome,
 )
 from soterix_qa_shared.qatouch.upload import (
@@ -290,7 +291,8 @@ def pytest_configure(config: Any) -> None:
             sinks,
             run_key=_armed_run_key(config),
             project_key=os.environ.get('QATOUCH_PROJECT_ID', DEFAULT_PROJECT_KEY),
-            target=tuple(getattr(config, 'args', ()) or ()),
+            target=relative_target(getattr(config, 'args', ()) or (),
+                                   config.rootpath),
         )
     except Exception as exc:
         print(f'QA Touch: the reporter could not start ({exc}). '
