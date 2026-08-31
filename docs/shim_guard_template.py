@@ -105,20 +105,33 @@ def test_shim_is_registered_under_one_name_only(pytestconfig):
 # --- 2. patching the old path reaches the running code ----------------------
 
 def test_patching_the_old_path_moves_the_run_record(monkeypatch, tmp_path):
-    """The record sink is handed its path, but the plugin reads the module
-    global to find it - so a patch on the OLD path must still land."""
+    """The PLUGIN, not the test, must read the patched path.
+
+    An earlier version of this test patched the module global and then read
+    it back itself to build the sink - a setattr/getattr round-trip that
+    proves nothing about the code that runs. It now drives the plugin's own
+    entry points, so the path under test is the one a real session uses.
+    """
     target = tmp_path / 'last_run_results.json'
     monkeypatch.setattr(shim_reporter, 'RUN_RESULTS_PATH', target)
 
-    now = datetime.now(UTC)
-    sink = RunResultsFileSink(shim_reporter.RUN_RESULTS_PATH)
-    sink.finish([RunResult(nodeid='tests/x.py::test_y', outcome='passed')],
-                RunContext(started=now, ended=now, run_key='rk-shim-guard'))
+    config = MagicMock()
+    config.rootpath = REPO_ROOT
+    config.getoption.side_effect = lambda name, default=None: default
+    # configure() would recompute the paths from rootpath and undo the patch,
+    # which is exactly what a real session wants and this test does not.
+    monkeypatch.setattr(shim_reporter, 'configure', lambda root: None)
+    shim_reporter.pytest_configure(config)
+    reporter = config.pluginmanager.register.call_args[0][0]
+
+    reporter.record(None, 'tests/x.py::test_y', 'passed', duration=0.1)
+    reporter.pytest_sessionfinish(session=None, exitstatus=0)
 
     assert target.exists(), (
-        'patching the old import path did not reach the writer - the shim is '
-        'not an alias, or the module froze its path at import time.')
-    assert json.loads(target.read_text())['run_key'] == 'rk-shim-guard'
+        'the plugin did not write to the patched path. The shim is not an '
+        'alias, or the plugin froze its path at import time.')
+    assert [r['nodeid'] for r in json.loads(target.read_text())['results']] == [
+        'tests/x.py::test_y']
 
 
 def test_patching_the_old_client_path_reaches_the_upload(monkeypatch, tmp_path):
@@ -194,9 +207,23 @@ def test_the_retry_shim_points_at_this_repos_failure_log():
 
 def test_the_module_globals_are_read_at_call_time(monkeypatch, tmp_path):
     """Rule 6: a recompute-from-ROOT accessor ignores the patch, writes into
-    the real repo, and the test that thought it was isolated still passes."""
+    the real repo, and the test that thought it was isolated still passes.
+
+    Asserting pkg_reporter.X == the value just set on shim_reporter.X is a
+    tautology once identity holds - the same object read twice. What has to
+    be true is that the SINK the plugin builds picks the patched value up,
+    which means the plugin reads the global when it builds, not at import.
+    """
     monkeypatch.setattr(shim_reporter, 'RUN_RESULTS_PATH', tmp_path / 'x.json')
-    assert pkg_reporter.RUN_RESULTS_PATH == tmp_path / 'x.json'  # noqa: SIM300
+    config = MagicMock()
+    config.rootpath = REPO_ROOT
+    config.getoption.side_effect = lambda name, default=None: default
+    monkeypatch.setattr(shim_reporter, 'configure', lambda root: None)
+    shim_reporter.pytest_configure(config)
+    reporter = config.pluginmanager.register.call_args[0][0]
+    paths = [getattr(s, 'path', None) for s in reporter.sinks]
+    assert tmp_path / 'x.json' in paths, (
+        f'the plugin built its sinks from a stale path: {paths}')
 
 
 # --- 4. a CLI still runs through its shim -----------------------------------
@@ -214,9 +241,18 @@ def test_the_retry_cli_actually_runs_through_the_shim():
     proc = subprocess.run(
         [sys.executable, str(script), '--dry-run'],
         capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120)
-    assert proc.stdout.strip(), (
-        f'{script.name} --dry-run printed nothing. A plain alias shim exits 0 '
-        f'having run no code at all; this module needs the guarded form.')
+    # Not merely "printed something". A plain-form shim that emits any line
+    # at all - a deprecation notice, a banner, a log line - would satisfy
+    # that while the CLI did nothing. The CLI's own banner is the evidence.
+    assert 'Upload Retry' in proc.stdout or 'nothing to retry' in proc.stdout, (
+        f'{script.name} --dry-run did not produce the retry CLI output. '
+        f'exit={proc.returncode} stdout={proc.stdout[:300]!r} '
+        f'stderr={proc.stderr[:200]!r}. A plain alias shim exits 0 having '
+        f'run no code at all; this module needs the guarded form.')
+    assert proc.returncode in (0, 1), (
+        f'{script.name} --dry-run exited {proc.returncode}. 2 means the CLI '
+        f'ran but could not find its repo root, so the shim configured a '
+        f'root that is not this repo.')
 
 
 # --- 5. THIS REPO: the injected mapping policy ------------------------------
