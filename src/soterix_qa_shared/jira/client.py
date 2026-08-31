@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from soterix_qa_shared.jira.fields import BUG_LIKE, staleness_warning
 from soterix_qa_shared.jira.fields import mapper as default_mapper
 
 log = logging.getLogger('soterix_qa_shared.jira')
@@ -65,8 +66,11 @@ class JiraClient:
     def _map_fields(self, qa_touch_data: dict[str, Any] | None,
                     issue_type: str) -> tuple[dict[str, Any], list[str]]:
         """(mapped fields, required field names still unfilled)."""
-        if not qa_touch_data or not self.mapper or issue_type != 'Bug':
+        if not qa_touch_data or not self.mapper or issue_type not in BUG_LIKE:
             return {}, []
+        stale = staleness_warning()
+        if stale:
+            log.warning('[JIRA] %s', stale)
         mapped = self.mapper.map_bug_fields(**qa_touch_data)
         return mapped, self.mapper.get_unmapped_required_fields(issue_type, mapped)
 

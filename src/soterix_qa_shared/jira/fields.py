@@ -14,6 +14,7 @@ cannot find a repo's config directory on its own.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,50 @@ def load_discovered_fields() -> dict[str, Any]:
             data = {}
     _CACHE, _CACHE_KEY = data, key
     return data
+
+
+# Issue types QA creates that share Bug's field shape. Measured on the real
+# NC map: Child Bug carries the same 16 field ids as Bug, with one extra
+# required field, Parent. Refusing to map it meant a Child Bug got no
+# custom fields and no warning about them either.
+BUG_LIKE = ('Bug', 'Child Bug')
+
+# A discovered map goes stale when a Jira admin adds or changes a field, and
+# nothing here can tell. Past this it is worth saying so out loud: the real
+# NC map was discovered 2026-02-07 and nothing had looked at that date.
+STALE_AFTER_DAYS = 90
+
+
+def discovered_at() -> datetime | None:
+    """When the field map was generated, or None if it does not say."""
+    raw = (load_discovered_fields().get('metadata') or {}).get('discovered_at')
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def map_age_days(now: datetime | None = None) -> int | None:
+    """How old the field map is in days, or None if it does not say."""
+    when = discovered_at()
+    if when is None:
+        return None
+    # Naive on both sides. The map's discovered_at carries no offset, so
+    # an aware `now` would raise rather than compare.
+    return ((now or datetime.now()) - when).days  # noqa: DTZ005
+
+
+def staleness_warning(now: datetime | None = None) -> str | None:
+    """One line when the map is old enough to be worth re-discovering."""
+    age = map_age_days(now)
+    if age is None or age < STALE_AFTER_DAYS:
+        return None
+    return (f'The Jira field map is {age} days old. A field added or changed '
+            f'in Jira since then is invisible here, and an unknown select '
+            f'value falls back to the first allowed one. '
+            f'Re-run the field discovery.')
 
 
 def _fields_for(issue_type: str) -> dict[str, Any]:

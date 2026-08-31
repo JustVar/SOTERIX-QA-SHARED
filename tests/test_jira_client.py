@@ -223,6 +223,29 @@ def test_fields_are_mapped_only_for_bugs(monkeypatch):
     assert api.create_issue.call_args.kwargs['fields']['issuetype'] == {'name': 'Task'}
 
 
+def test_a_child_bug_gets_the_same_field_mapping_as_a_bug(monkeypatch):
+    """Measured on the real NC map: Child Bug carries the SAME 16 field ids
+    as Bug, plus Parent as a twelfth required field. Refusing to map it left
+    a Child Bug with no custom fields and no warning about them either."""
+    api, _ = _live(monkeypatch)
+    m = _mapper({'customfield_1': 'Views'}, ['Parent (parent)'])
+    result = JiraClient(field_mapper=m).create_issue(
+        's', 'd', issue_type='Child Bug', qa_touch_data={'module': 'Views'})
+    assert api.create_issue.call_args.kwargs['fields']['customfield_1'] == 'Views'
+    assert result['unmapped_required_fields'] == ['Parent (parent)']
+
+
+def test_a_stale_field_map_is_reported_when_it_is_used(monkeypatch, caplog):
+    """Nothing read the map's age. The real NC map was discovered
+    2026-02-07."""
+    _live(monkeypatch)
+    monkeypatch.setattr(jc, 'staleness_warning', lambda: 'the map is 205 days old')
+    client = JiraClient(field_mapper=_mapper({'customfield_1': 'x'}))
+    with caplog.at_level(logging.WARNING, logger='soterix_qa_shared.jira'):
+        client.create_issue('s', 'd', qa_touch_data={'module': 'Views'})
+    assert '205 days old' in caplog.text
+
+
 def test_the_project_key_comes_from_the_environment_when_not_given(monkeypatch):
     api, _ = _live(monkeypatch)
     monkeypatch.setenv('JIRA_PROJECT_KEY', 'NC')

@@ -7,13 +7,19 @@ That is the normal state on a fresh checkout.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 
+# The field map's discovered_at carries no UTC offset, so these comparisons
+# are naive on both sides. An aware datetime here would raise, not compare.
+# ruff: noqa: DTZ001
 from soterix_qa_shared.jira import fields as jf
 from soterix_qa_shared.jira.fields import QATouchToJiraMapper
 
 DISCOVERED = {
+    'metadata': {'project_key': 'NC',
+                 'discovered_at': '2026-02-07T14:59:24'},
     'issue_types': {
         'Bug': {
             'fields': {
@@ -270,3 +276,45 @@ def test_the_mappers_own_cache_can_be_dropped(discovered):
     jf.configure(discovered.parent / 'gone.json')
     m.reset()
     assert m._get_required_fields('Bug') == {}
+
+
+# ---------------------------------------------------------------------------
+# A field map has an age, and nothing was reading it
+# ---------------------------------------------------------------------------
+
+def test_the_map_reports_when_it_was_discovered(discovered):
+    """The real NC map says 2026-02-07 and nothing had ever looked."""
+    assert jf.discovered_at() == datetime(2026, 2, 7, 14, 59, 24)
+
+
+def test_a_map_with_no_metadata_has_no_age(tmp_path):
+    path = tmp_path / 'm.json'
+    path.write_text(json.dumps({'issue_types': {}}), encoding='utf-8')
+    jf.configure(path)
+    assert jf.discovered_at() is None
+    assert jf.map_age_days() is None
+    assert jf.staleness_warning() is None
+
+
+def test_a_fresh_map_raises_no_warning(discovered):
+    assert jf.staleness_warning(datetime(2026, 3, 1)) is None
+
+
+def test_an_old_map_says_how_old_and_what_it_costs(discovered):
+    """A field added in Jira since discovery is invisible here, and an
+    unknown select value falls back to the first allowed one."""
+    # 2026-02-07T14:59 to 2026-08-31T00:00 is 204 whole days. Computed,
+    # not copied from a report: the audit that found this said 205, which is
+    # what it becomes later the same day.
+    warning = jf.staleness_warning(datetime(2026, 8, 31))
+    assert warning and '204 days old' in warning
+    assert 'Re-run the field discovery' in warning
+
+
+def test_a_malformed_discovered_at_is_not_an_error(tmp_path):
+    path = tmp_path / 'm.json'
+    path.write_text(json.dumps(
+        {'metadata': {'discovered_at': 'last Tuesday'}, 'issue_types': {}}),
+        encoding='utf-8')
+    jf.configure(path)
+    assert jf.discovered_at() is None
