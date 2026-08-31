@@ -35,7 +35,7 @@ jira = ["jira>=3.10,<4"]
 #
 # Exact pins go stale. Dependabot bumps them as PRs that CI has to prove,
 # which is what keeps "reproducible" from also meaning "frozen".
-dev = ["pytest==9.1.1", "ruff==0.16.2", "pytest-html==4.2.0"]
+dev = ["pytest==9.1.1", "ruff==0.16.5", "pytest-html==4.2.0"]
 
 [tool.setuptools.package-data]
 soterix_qa_shared = ["py.typed"]
