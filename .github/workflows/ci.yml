@@ -1,8 +1,11 @@
 name: ci
 
-# Two repos install this package and run their whole test suite through it,
-# so a quiet defect here is a quiet defect everywhere. Every job below
-# guards a failure mode that was reproduced, not imagined. See docs/RULES.md.
+# Two repos WILL install this package and run their whole test suite through
+# it, at migration steps 5 and 6. Neither does yet: the UI repo has the
+# shims only on a rehearsal branch and the API repo does not reference the
+# package at all. When they do, a quiet defect here is a quiet defect
+# everywhere, which is what every job below is for. Each guards a failure
+# mode that was reproduced, not imagined. See docs/RULES.md.
 #
 # Nothing here needs a credential. The tests are offline by construction:
 # no network, no browser, no QA Touch key.
@@ -12,6 +15,13 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+
+# Every job here checks out and runs tests. Nothing writes to the repo, so
+# nothing needs more than read. The sibling repo's qa-nightly.yml already
+# scopes its token this way; these should not be looser than the file they
+# sit beside.
+permissions:
+  contents: read
 
 jobs:
   # The interpreter range is a claim until something exercises it.
@@ -119,7 +129,9 @@ jobs:
           if not m:
               sys.exit("no [project] version found in pyproject.toml")
           version = m.group(1)
-          if tag.lstrip("v") != version:
+          # removeprefix, not lstrip: lstrip takes a character SET, so
+          # it accepts "vv0.12.0" and "vvvvv0.12.0" as 0.12.0.
+          if tag.removeprefix("v") != version:
               sys.exit(
                   f"tag {tag} does not match [project] version {version}.\n"
                   "A consumer pinning this tag would install the previous code, "

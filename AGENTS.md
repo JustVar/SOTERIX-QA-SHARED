@@ -3,9 +3,10 @@
 If you use an AI tool to write, test, or update anything in this repo, point
 it here first.
 
-This is a library, not a test suite. Two repos install it and both run their
-whole test suite through it, so a quiet defect here is a quiet defect
-everywhere. Read before making changes:
+This is a library, not a test suite. Two repos will install it and run their
+whole test suite through it, so a quiet defect here becomes a quiet defect
+everywhere. Neither has migrated yet - see `STATUS.md` - which is exactly
+why the guards go in before the consumers do. Read before making changes:
 
 1. **`docs/RULES.md`** - nine rules and the compatibility contract. Every one
    of them was reproduced, and every one of them prevents a *silent* failure:

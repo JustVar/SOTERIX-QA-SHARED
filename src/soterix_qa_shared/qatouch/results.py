@@ -274,7 +274,11 @@ class RunLedgerSink(ResultSink):
         self.error: str | None = None
 
     def row(self, results: list[RunResult], context: RunContext) -> dict[str, Any]:
-        counts: dict[str, int] = {}
+        # The three standard outcomes are always present, even at zero. A
+        # dict built only from what occurred omits 'failed' on a green run,
+        # so `.counts.failed` reads null for exactly the runs a reader most
+        # wants to filter on, and two rows cannot be compared key by key.
+        counts: dict[str, int] = {'passed': 0, 'failed': 0, 'skipped': 0}
         failures: list[str] = []
         for r in results:
             counts[r.outcome] = counts.get(r.outcome, 0) + 1

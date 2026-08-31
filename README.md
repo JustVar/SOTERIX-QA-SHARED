@@ -3,10 +3,15 @@
 The QA Touch pipeline the Soterix QA repos share: an API client, a pytest
 result reporter, and the tools that replay a failed upload.
 
-Before this package, the UI repo and the API repo each carried their own copy
-of the client and the reporter, and the copies had already diverged. Every
-new product repo would have multiplied that. Now there is one copy, and each
-old import path in a consumer repo is a thin shim pointing here.
+The UI repo and the API repo each carry their own copy of the client and the
+reporter, and the copies had already diverged. Every new product repo would
+multiply that. This package is the one copy they will share: at migration
+steps 5 and 6 each old import path in a consumer becomes a thin shim
+pointing here.
+
+**Neither consumer has migrated yet.** The UI repo has the shims on a
+rehearsal branch; the API repo does not reference this package at all. See
+`STATUS.md` for where that stands.
 
 ## Install
 
@@ -25,8 +30,8 @@ hands the whole run to every registered destination:
 
 | Destination | When | Where it writes |
 |---|---|---|
-| Local run record | every session | `logs/last_run_results.json` |
-| Run ledger | runs that upload | `history/YYYY-MM.jsonl` (tracked in git) |
+| Local run record | every session that ran a test | `logs/last_run_results.json` |
+| Run ledger | runs that upload | `history/YYYY-MM.jsonl` (meant to be tracked) |
 | QA Touch upload | when armed | the QA Touch test run |
 
 **Uploads results to QA Touch, and checks that they landed.** This API

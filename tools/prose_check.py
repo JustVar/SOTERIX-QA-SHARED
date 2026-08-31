@@ -89,7 +89,9 @@ def tracked_markdown() -> list[Path]:
         names = []
     if not names:                       # not a checkout, or no git
         return sorted(ROOT.rglob('*.md'))
-    # The writing rules themselves quote what they forbid.
+    # These quote what they forbid. orwell.md is listed because the
+    # style guide names it as the short version; it is not in this
+    # repo yet, and a skip entry for an absent file is harmless.
     skip = {'docs/writing/ste.md', 'docs/writing/orwell.md', 'docs/STYLE.md'}
     return [ROOT / n for n in names if n not in skip]
 

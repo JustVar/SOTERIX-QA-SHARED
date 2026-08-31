@@ -303,8 +303,21 @@ def test_an_armed_run_appends_one_line(tmp_path):
     assert row['target'] == ['tests/ui']
     assert row['dur_s'] == 1840.0
     assert row['exit'] == 1
-    assert row['counts'] == {'passed': 1, 'failed': 1}
+    # The three standard outcomes are always present, even at zero, so
+    # `.counts.failed` never reads null on a green run and two rows
+    # can be compared key by key.
+    assert row['counts'] == {'passed': 1, 'failed': 1, 'skipped': 0}
     assert row['failed'] == ['t::b']
+
+
+def test_a_green_run_still_reports_a_failed_count_of_zero(tmp_path):
+    """Built from what occurred, `counts` omitted 'failed' on an all-pass
+    run - so `.counts.failed` read null for exactly the runs a reader most
+    wants to filter on, and the documented recipe printed "null failed"."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r(f't::{i}', 'passed') for i in range(604)], _ctx(run_key='d6pw'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert row['counts'] == {'passed': 604, 'failed': 0, 'skipped': 0}
 
 
 def test_a_ledger_row_is_small(tmp_path):

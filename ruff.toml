@@ -1,7 +1,10 @@
 # Ruff settings for soterix-qa-shared.
 # Run: python -m ruff check .
-# No rules are selected here, so this ruff version's defaults apply - which
-# is a broad set (415 rules on 0.16.x), not the four groups the docs imply.
+# No rules are selected here, so this ruff version's defaults apply. That is
+# a broad set - several hundred rules on 0.16.x, not the four groups the
+# docs imply - and it differs between ruff versions, which is why the dev
+# extra pins one. Read the live figure rather than trusting a number here:
+#   ruff check . --show-settings   (see linter.rules.enabled)
 # The dev extra pins the version, because a floating pin makes a lint
 # verdict depend on when a machine last installed.
 

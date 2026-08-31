@@ -10,7 +10,7 @@ leaves behind that belongs in a repository.
 | Traces, videos, screenshots, HTML | `reports/` | no | 4.4 GB after one week, and regenerable by re-running |
 | Per-node-id record of the last run | `logs/last_run_results.json` | no | overwritten every run, per machine |
 | Pending failed uploads | `logs/upload_failures.json` | no | a work queue, not a record |
-| **One line per armed run** | **`history/YYYY-MM.jsonl`** | **yes** | **~350 bytes, and it answers what the evidence cannot** |
+| **One line per armed run** | **`history/YYYY-MM.jsonl`** | **meant to be** | **~350 bytes, and it answers what the evidence cannot** |
 
 The evidence answers "what went wrong in this run". The ledger answers the
 questions that need more than one run: *when did this test start failing*,
@@ -77,9 +77,13 @@ reports/
 When did a test start failing:
 
 ```bash
-grep -l . history/*.jsonl | xargs cat \
-  | jq -r 'select(.failed[]? | test("test_grid")) | "\(.at) \(.commit)"'
+cat history/*.jsonl \
+  | jq -r 'select(any(.failed[]?; test("test_grid"))) | "\(.at) \(.commit)"'
 ```
+
+`any(...)`, not a bare `.failed[]?`. A generator inside `select` emits the
+row once per match, so a run whose failure list mentions the test twice
+prints twice and the timeline counts runs that did not happen.
 
 Is the suite getting slower, by the duration of full-suite runs over time:
 
@@ -87,6 +91,10 @@ Is the suite getting slower, by the duration of full-suite runs over time:
 cat history/*.jsonl \
   | jq -r 'select(.counts.passed > 500) | "\(.at) \(.dur_s)s \(.counts.failed) failed"'
 ```
+
+`counts` always carries `passed`, `failed` and `skipped`, at zero when they
+did not occur, so this reads `0 failed` on a green run rather than `null
+failed`. Any other outcome appears only when it happened.
 
 Which tests fail most often:
 

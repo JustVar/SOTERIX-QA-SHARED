@@ -61,14 +61,14 @@ cases is the upload sink's private step.
 **`ResultSink` is the extension point.** Three sinks today: the local run
 record, the tracked run ledger, and the QA Touch upload. A JUnit writer or a
 dashboard feed plugs in without reopening the reporter. Each sink decides
-when it applies, which is why the record is written on every session and the
-ledger only on armed ones.
+when it applies, which is why the record is written on
+every session that ran a test and the ledger only on armed ones.
 
 ## Next, in order
 
 | Step | State | What |
 |---|---|---|
-| 0 | mostly | Repo, CI and interpreter range done; PAT open |
+| 0 | mostly | Repo, CI, interpreter range done. PAT and shim matrix open |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
 | 2b | deferred | The rest of the reporting stack |
@@ -78,10 +78,17 @@ ledger only on armed ones.
 | 6 | | Migrate the UI repo (6a pin, 6b shims) |
 | 7 | | Docs |
 
-**0. The guards later steps depend on.** Add the package's CI: collect gate,
-ruff lint (the ruff.toml is inert without one), the tag-equals-version guard
-(rule 4), the wheel-install import job (rule 9), and a per-interpreter
-shim-identity matrix.
+**0. The guards later steps depend on.** The package's CI is in place
+(`.github/workflows/ci.yml`): tests, ruff and the prose check across a
+3.11 to 3.14 matrix; a wheel job that installs the BUILT wheel, imports
+every module under a base install, checks `py.typed` shipped, and asserts
+the reporter fails naming `pytest` (rule 2's `exc.name` branch depends on
+that staying true); and the tag-equals-version guard of rule 4, which runs
+only on a `v*` tag.
+
+NOT built, and step 0 does not close without it: a per-interpreter
+shim-identity matrix. `ci.yml` has three jobs and none of them builds a
+shim. It belongs in the consumer repos and lands with steps 5 and 6.
 
 *Governance files.* `README.md`, `AGENTS.md`, `docs/STYLE.md` and
 `docs/writing/ste.md` are in place, and `tools/prose_check.py` enforces the
