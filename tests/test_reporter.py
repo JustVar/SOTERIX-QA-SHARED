@@ -196,13 +196,124 @@ def test_the_upload_sink_is_handed_the_configured_failure_log(tmp_path):
     assert reporter.sinks[-1].failure_log_path == tmp_path / 'logs' / 'upload_failures.json'
 
 
-def test_pytest_configure_survives_an_unresolvable_root(monkeypatch, capsys):
+def test_pytest_configure_survives_an_unresolvable_root(monkeypatch, capsys, tmp_path):
     """An exception here would abort the whole session with INTERNALERROR."""
     monkeypatch.setattr(qr, 'configure', MagicMock(side_effect=OSError('bad rootdir')))
-    config = MagicMock()
+    config = _config(tmp_path)
     qr.pytest_configure(config)   # must not raise
     assert 'could not resolve the repo root' in capsys.readouterr().out
     config.pluginmanager.register.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The two guards both sibling repo-writing plugins carry, and this one did not
+# ---------------------------------------------------------------------------
+
+def test_a_collect_only_pass_registers_nothing(tmp_path):
+    """It produces no results, and writing its empty record over a real one
+    destroys the last real run. Measured before this guard: a bare
+    `pytest --collect-only` replaced a 20-result record with zero, and no
+    reader could tell - run_suite checks only that the file exists, so an
+    empty record reads as "a run with no failures" rather than "no run".
+
+    Four shipped tools run a bare collect-only pass after a suite, and so
+    does a merge gate."""
+    config = _config(tmp_path, {'--collect-only': True})
+    qr.pytest_configure(config)
+    config.pluginmanager.register.assert_not_called()
+
+
+@pytest.mark.parametrize('option', ['--collect-only', '--setup-plan', '--setup-only'])
+def test_every_dry_pass_registers_nothing(tmp_path, option):
+    """--setup-plan is NOT covered by --collect-only. Measured: it still
+    emits reports and wrote a 1-result record over a real 5-result one.
+    Both consumer CI gates run --setup-plan."""
+    config = _config(tmp_path, {option: True})
+    qr.pytest_configure(config)
+    config.pluginmanager.register.assert_not_called()
+
+
+def test_a_collect_only_pass_is_blocked_even_when_armed(tmp_path):
+    """Arming must not buy past the guard: an armed collect-only would also
+    reach the QA Touch upload with nothing to upload."""
+    config = _config(tmp_path, {'--collect-only': True, '--qatouch-upload': True,
+                                '--qatouch-run': 'RUN1'})
+    qr.pytest_configure(config)
+    config.pluginmanager.register.assert_not_called()
+
+
+def test_an_xdist_worker_writes_nothing(monkeypatch, tmp_path):
+    """sessionfinish fires in every worker AND in the controller (measured),
+    so without this each worker writes its own subset over the others."""
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    sink = _Recorder()
+    r = _reporter([sink])
+    r.record(None, 't::a', 'passed')
+    r.pytest_sessionfinish(session=None, exitstatus=0)
+    assert sink.finished is None
+
+
+def test_the_controller_writes(monkeypatch):
+    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    sink = _Recorder()
+    r = _reporter([sink])
+    r.record(None, 't::a', 'passed')
+    r.pytest_sessionfinish(session=None, exitstatus=0)
+    assert [x.nodeid for x in sink.finished] == ['t::a']
+
+
+# ---------------------------------------------------------------------------
+# Recording happens on the hook the CONTROLLER sees
+# ---------------------------------------------------------------------------
+
+def _report(nodeid, outcome, when='call', duration=0.5, extra=None):
+    rep = MagicMock()
+    rep.nodeid = nodeid
+    rep.outcome = outcome
+    rep.when = when
+    rep.duration = duration
+    rep.skipped = outcome == 'skipped'
+    if extra is None:
+        del rep._qatouch
+    else:
+        rep._qatouch = extra
+    return rep
+
+
+def test_logreport_records_the_result(monkeypatch, tmp_path):
+    """makereport fires only on xdist WORKERS; logreport fires on the
+    controller with every test. Recording used to sit in makereport, so a
+    parallel run recorded per worker and the controller wrote an empty
+    record over the lot."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'failed', extra={
+        'case_key': 'K1', 'project_key': 'JlW1', 'screenshot': b'png'}))
+    rec = r.records['t::a']
+    assert (rec.outcome, rec.case_key, rec.duration) == ('failed', 'K1', 0.5)
+    assert rec.screenshot == b'png'
+
+
+def test_logreport_ignores_teardown_and_passing_setup(monkeypatch, tmp_path):
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'passed', when='teardown'))
+    r.pytest_runtest_logreport(_report('t::b', 'passed', when='setup'))
+    assert r.records == {}
+
+
+def test_logreport_records_a_setup_phase_skip(monkeypatch, tmp_path):
+    """A skip decided during setup never reaches the call phase."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'skipped', when='setup'))
+    assert r.records['t::a'].outcome == 'skipped'
+
+
+def test_logreport_survives_a_report_with_no_stashed_data(monkeypatch, tmp_path):
+    """A report from a plugin that ran before this one, or from a process
+    where makereport never fired, still has to be recorded."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'passed'))
+    assert r.records['t::a'].case_key is None
+    assert r.records['t::a'].project_key == qr.DEFAULT_PROJECT_KEY
 
 
 def test_pytest_configure_survives_a_reporter_that_cannot_start(monkeypatch, capsys, tmp_path):

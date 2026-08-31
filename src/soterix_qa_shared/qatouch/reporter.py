@@ -171,6 +171,32 @@ def _env_flag(name: str, default: str = '') -> bool:
     return os.environ.get(name, default).lower() in ('1', 'true', 'yes')
 
 
+def is_xdist_worker() -> bool:
+    """True inside a pytest-xdist worker process."""
+    return bool(os.environ.get('PYTEST_XDIST_WORKER'))
+
+
+# Options that walk the suite without running it. --setup-plan is not
+# covered by --collect-only: measured, it still emits reports and wrote a
+# 1-result record over a real 5-result one. Both consumer CI gates run
+# --setup-plan, so listing only --collect-only would have left the guard
+# half-open exactly where it is exercised most.
+DRY_PASS_OPTIONS = ('--collect-only', '--setup-plan', '--setup-only')
+
+
+def _is_dry_pass(config: Any) -> bool:
+    """True when this invocation will not actually run any test body."""
+    for option in DRY_PASS_OPTIONS:
+        try:
+            if config.getoption(option, default=False):
+                return True
+        except Exception as exc:
+            # An option a future pytest renamed or dropped. Say so once:
+            # a silently skipped guard here is a destroyed run record.
+            log.debug(f'QA Touch: could not read {option}: {exc}')
+    return False
+
+
 def _armed_run_key(config: Any) -> str | None:
     """The run key of an ARMED session, or None.
 
@@ -231,6 +257,20 @@ def _build_sinks(config: Any) -> list[ResultSink]:
 
 
 def pytest_configure(config: Any) -> None:
+    # A collection-only pass produces no results, and writing its empty
+    # record over a real one destroys the last real run. Measured: a bare
+    # `pytest --collect-only` replaced a 20-result record with zero, and no
+    # reader could tell - run_suite checks only that the file exists, so an
+    # empty one reads as "a run with no failures" rather than "no run".
+    #
+    # Four shipped tools run a bare collect-only pass after a suite
+    # (run_suite, qatouch_mapper, qatouch_sync_check, qatouch_run_manager),
+    # and so does a merge gate. Both sibling repo-writing plugins in the UI
+    # repo carry this guard; this one did not, which the sink split made
+    # destructive rather than merely absent.
+    if _is_dry_pass(config):
+        return
+
     # Paths first, before anything decides whether to report: the sinks are
     # built from them. Guarded because an exception raised here aborts the
     # whole session with INTERNALERROR - seen for real when a Windows
@@ -397,19 +437,53 @@ class QATouchReporter:
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_makereport(self, item: Any, call: Any):
+        """Attach what only the RUNNING process can see to the report.
+
+        Under xdist, this hook fires on the worker and never on the
+        controller (measured). The item, its markers and its live Playwright
+        page exist only here, so everything derived from them is stashed on
+        the report, which xdist serialises to the controller intact -
+        including the screenshot bytes (also measured).
+        """
         outcome = yield
         report = outcome.get_result()
-
-        if report.when != 'call':
-            # A skip decided during setup never reaches the call phase.
-            if report.when == 'setup' and report.skipped:
-                self.record(item, item.nodeid, 'skipped',
-                            duration=getattr(report, 'duration', None))
+        if report.when != 'call' and not (report.when == 'setup' and report.skipped):
             return
-
         self._maybe_capture_screenshot(item, report)
-        self.record(item, item.nodeid, report.outcome,
-                    duration=getattr(report, 'duration', None))
+        try:
+            report._qatouch = {
+                'case_key': self._resolve_case_key(item, item.nodeid),
+                'project_key': self._resolve_project_key(item),
+                'screenshot': getattr(item, '_qatouch_screenshot', None),
+            }
+        except Exception as e:  # a broken marker must not fail the test
+            log.warning(f'QA Touch: could not resolve {item.nodeid}: {e}')
+
+    def pytest_runtest_logreport(self, report: Any) -> None:
+        """Record the result. This is the hook the CONTROLLER sees.
+
+        Recording used to happen in makereport, which under xdist runs only
+        on the workers. Each worker then wrote its own subset of the run
+        record over the others, and the controller - which had recorded
+        nothing - wrote an empty one over all of them. logreport fires on
+        the controller with every test, in both parallel and serial runs.
+        """
+        if report.when == 'call':
+            outcome = report.outcome
+        elif report.when == 'setup' and report.skipped:
+            # A skip decided during setup never reaches the call phase.
+            outcome = 'skipped'
+        else:
+            return
+        extra = getattr(report, '_qatouch', None) or {}
+        self.record_result(RunResult(
+            nodeid=report.nodeid,
+            outcome=outcome,
+            duration=float(getattr(report, 'duration', 0.0) or 0.0),
+            case_key=extra.get('case_key'),
+            project_key=extra.get('project_key') or self.default_project_key,
+            screenshot=extra.get('screenshot'),
+        ))
 
     def record(self, item: Any, nodeid: str, outcome: str,
                duration: float | None = None) -> None:
@@ -418,15 +492,18 @@ class QATouchReporter:
         Every test is recorded, mapped or not: an unmapped failure still
         deserves a bug, and the node-id record is what the bug filer reads.
         """
-        result = RunResult(
+        self.record_result(RunResult(
             nodeid=nodeid,
             outcome=outcome,
             duration=float(duration) if duration is not None else None,
             case_key=self._resolve_case_key(item, nodeid),
             project_key=self._resolve_project_key(item),
             screenshot=getattr(item, '_qatouch_screenshot', None) if item else None,
-        )
+        ))
 
+    def record_result(self, result: RunResult) -> None:
+        """Store one already-built result, worst-wins per node id."""
+        nodeid = result.nodeid
         existing = self.records.get(nodeid)
         if existing is None:
             self.records[nodeid] = result
@@ -460,6 +537,13 @@ class QATouchReporter:
         )
 
     def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
+        # Only the controller writes. Under xdist this hook fires in every
+        # worker AND in the controller (measured), so without this each
+        # worker would write its own subset over the others, and the
+        # controller would write an empty one over all of them. The
+        # controller sees every result through logreport.
+        if is_xdist_worker():
+            return
         results = list(self.records.values())
         try:
             context = self.run_context(exitstatus)
