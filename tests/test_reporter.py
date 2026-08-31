@@ -273,6 +273,7 @@ def _report(nodeid, outcome, when='call', duration=0.5, extra=None):
     rep.when = when
     rep.duration = duration
     rep.skipped = outcome == 'skipped'
+    rep.failed = outcome == 'failed'
     if extra is None:
         del rep._qatouch
     else:
@@ -293,11 +294,40 @@ def test_logreport_records_the_result(monkeypatch, tmp_path):
     assert rec.screenshot == b'png'
 
 
-def test_logreport_ignores_teardown_and_passing_setup(monkeypatch, tmp_path):
+def test_logreport_ignores_a_passing_setup_and_teardown(monkeypatch, tmp_path):
+    """A test reports three times. Only the outcome-bearing phase counts."""
     r = _reporter()
     r.pytest_runtest_logreport(_report('t::a', 'passed', when='teardown'))
     r.pytest_runtest_logreport(_report('t::b', 'passed', when='setup'))
     assert r.records == {}
+
+
+def test_an_error_in_setup_is_recorded_as_a_failure(monkeypatch, tmp_path):
+    """A fixture that raises on the way IN produces a setup report and no
+    call phase at all. Before this, the test vanished from the record -
+    and a whole suite failing in setup, which is what "the environment is
+    down" looks like, left an empty record indistinguishable from a typo."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'failed', when='setup'))
+    assert r.records['t::a'].outcome == 'failed'
+
+
+def test_an_error_in_teardown_overrides_a_passing_call(monkeypatch, tmp_path):
+    """A fixture that raises on the way OUT reports call=passed then
+    teardown=failed. Before this, the record said "passed" - so an armed
+    run uploaded a Passed to QA Touch for a test that errored."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'passed', when='call'))
+    r.pytest_runtest_logreport(_report('t::a', 'failed', when='teardown'))
+    assert r.records['t::a'].outcome == 'failed'
+
+
+def test_a_passing_teardown_does_not_undo_a_failing_call(monkeypatch, tmp_path):
+    """Worst-wins, in the other direction."""
+    r = _reporter()
+    r.pytest_runtest_logreport(_report('t::a', 'failed', when='call'))
+    r.pytest_runtest_logreport(_report('t::a', 'passed', when='teardown'))
+    assert r.records['t::a'].outcome == 'failed'
 
 
 def test_logreport_records_a_setup_phase_skip(monkeypatch, tmp_path):

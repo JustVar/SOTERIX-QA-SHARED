@@ -183,8 +183,25 @@ class RunResultsFileSink(ResultSink):
         self.path = path
         self.written = 0
         self.error: str | None = None
+        self.skipped_empty = False
 
     def finish(self, results: list[RunResult], context: RunContext) -> None:
+        # A session that recorded nothing must not replace a session that
+        # did. Measured across 21 invocations: -x, --maxfail, a -k or -m
+        # that matches nothing, --deselect, a collection error, a mistyped
+        # node id, a nonexistent path, --fixtures and Ctrl-C all reached
+        # this point with an empty list and blanked a real record. Every
+        # consumer then read the empty file as "a run with no failures"
+        # rather than "no run", because they check only that it exists.
+        #
+        # This is the general guard. The dry-pass option list in the plugin
+        # avoids pointless work, but THIS is what makes the record safe:
+        # an option list can only ever cover the flags somebody thought of.
+        if not results:
+            self.written = 0
+            self.skipped_empty = True
+            return
+        self.skipped_empty = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -193,6 +210,11 @@ class RunResultsFileSink(ResultSink):
                 'project_key': context.project_key,
                 'env': context.env,
                 'armed': context.armed,
+                # pytest's exit status. 0 is a complete pass, 1 some tests
+                # failed, 2 interrupted, 5 nothing was collected. Without
+                # it, a run stopped by -x or Ctrl-C is indistinguishable on
+                # disk from a smaller suite that finished cleanly.
+                'exit': context.exitstatus,
                 'results': [
                     {
                         'nodeid': r.nodeid,
@@ -210,6 +232,8 @@ class RunResultsFileSink(ResultSink):
             self.error = str(exc)
 
     def summary(self) -> list[str]:
+        if self.skipped_empty:
+            return ['  Run record: unchanged (this session recorded nothing)']
         if self.error:
             return [f'  Run record: NOT written ({self.error})']
         return [f'  Run record: {self.written} results -> {self.path}']
@@ -276,6 +300,12 @@ class RunLedgerSink(ResultSink):
 
     def finish(self, results: list[RunResult], context: RunContext) -> None:
         if not context.armed:
+            return
+        # An armed session that ran nothing leaves a permanent row saying
+        # counts={} failed=[], which no later reader can tell from a real
+        # run where everything was deselected. The ledger is append-only,
+        # so a wrong row cannot be taken back.
+        if not results:
             return
         try:
             self.directory.mkdir(parents=True, exist_ok=True)

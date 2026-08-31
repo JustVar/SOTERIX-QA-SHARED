@@ -195,6 +195,14 @@ def test_run_record_matches_the_frozen_shape(tmp_path):
     assert tuple(payload['results'][0]) == RUN_RESULT_RECORD_FIELDS
 
 
+def test_the_run_record_carries_the_exit_status(tmp_path):
+    """A run stopped by -x or Ctrl-C is otherwise indistinguishable on disk
+    from a smaller suite that finished cleanly."""
+    path = tmp_path / 'logs' / 'last_run_results.json'
+    RunResultsFileSink(path).finish([_r('t::a', 'passed')], _ctx(exitstatus=2))
+    assert json.loads(path.read_text())['exit'] == 2
+
+
 def test_run_record_is_written_without_a_run_key(tmp_path):
     """The gap this split closes: an unarmed run used to write nothing at
     all, so the flaky history and the run cross-check saw no runs."""
@@ -210,8 +218,37 @@ def test_run_record_is_written_without_a_run_key(tmp_path):
 def test_run_record_marks_an_armed_session(tmp_path):
     path = tmp_path / 'logs' / 'last_run_results.json'
     sink = RunResultsFileSink(path)
-    sink.finish([], _ctx(run_key='RUN1'))
+    sink.finish([_r('t::a', 'passed')], _ctx(run_key='RUN1'))
     assert json.loads(path.read_text())['armed'] is True
+
+
+def test_a_session_that_recorded_nothing_leaves_the_record_alone(tmp_path):
+    """Measured across 21 invocations: -x, --maxfail, a -k or -m matching
+    nothing, --deselect, a collection error, a mistyped node id, a
+    nonexistent path, --fixtures and Ctrl-C all reach finish() with an
+    empty list. Each one used to blank a real record, and every consumer
+    reads an empty file as "a run with no failures" rather than "no run"."""
+    path = tmp_path / 'logs' / 'last_run_results.json'
+    sink = RunResultsFileSink(path)
+    sink.finish([_r('t::a', 'passed'), _r('t::b', 'failed')], _ctx())
+    before = path.read_text()
+
+    RunResultsFileSink(path).finish([], _ctx())
+    assert path.read_text() == before
+
+    later = RunResultsFileSink(path)
+    later.finish([], _ctx())
+    assert later.skipped_empty is True
+    assert 'unchanged' in later.summary()[0]
+
+
+def test_an_armed_session_that_ran_nothing_appends_no_ledger_row(tmp_path):
+    """The ledger is append-only, so a row saying counts={} failed=[] can
+    never be taken back, and no later reader can tell it from a real run
+    where everything was deselected."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([], _ctx(run_key='d6pw'))
+    assert not (tmp_path / 'history').exists()
 
 
 def test_run_record_includes_unmapped_tests(tmp_path):
@@ -314,8 +351,9 @@ def test_runs_in_different_months_land_in_different_files(tmp_path):
     """One file per month keeps concurrent appends from colliding as often,
     and keeps any one file readable."""
     sink = RunLedgerSink(tmp_path / 'history')
-    sink.finish([], _ctx(run_key='r1', started=datetime(2026, 8, 31, 23, 0, tzinfo=UTC)))
-    sink.finish([], _ctx(run_key='r2', started=datetime(2026, 9, 1, 1, 0, tzinfo=UTC)))
+    one = [_r('t::a', 'passed')]
+    sink.finish(one, _ctx(run_key='r1', started=datetime(2026, 8, 31, 23, 0, tzinfo=UTC)))
+    sink.finish(one, _ctx(run_key='r2', started=datetime(2026, 9, 1, 1, 0, tzinfo=UTC)))
     names = sorted(p.name for p in (tmp_path / 'history').iterdir())
     assert names == ['2026-08.jsonl', '2026-09.jsonl']
 

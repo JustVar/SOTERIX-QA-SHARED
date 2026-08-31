@@ -473,6 +473,18 @@ class QATouchReporter:
         elif report.when == 'setup' and report.skipped:
             # A skip decided during setup never reaches the call phase.
             outcome = 'skipped'
+        elif report.failed:
+            # An ERROR in setup or teardown. Measured before this branch
+            # existed: a test whose fixture raised on the way IN was not
+            # recorded at all, and one whose fixture raised on the way OUT
+            # was recorded 'passed' - so an armed run uploaded a Passed to
+            # QA Touch for a test that errored. A whole suite failing in
+            # setup, which is what "the environment is down" looks like,
+            # produced an empty record indistinguishable from a typo.
+            #
+            # Recorded as failed, and worst-wins in record_result means a
+            # teardown error correctly overrides the passing call phase.
+            outcome = 'failed'
         else:
             return
         extra = getattr(report, '_qatouch', None) or {}
