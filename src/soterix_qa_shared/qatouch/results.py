@@ -23,7 +23,9 @@ private business, not the shape everything else has to live with.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -104,6 +106,52 @@ class RunContext:
     def armed(self) -> bool:
         """True when this session was uploading to QA Touch."""
         return self.run_key is not None
+
+
+def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
+    """Append `text` to `path` under an exclusive cross-machine lock.
+
+    A plain `open(path, 'a')` is NOT atomic across handles on Windows, and
+    two armed runs sharing a clone (a nightly overlapping a manual run on
+    the box) then lose a whole row with no corruption to show for it.
+    Measured: 40 concurrent appends produced 38 lines. Silent loss is the
+    exact class the ledger exists to prevent, so the append takes a lock.
+
+    The lock is a sibling `.lock` file claimed with O_CREAT|O_EXCL, which is
+    atomic on every OS and needs no third-party dependency. A holder that
+    dies leaves the file behind, so a lock older than the timeout is treated
+    as stale and broken, bounding the wait. The write itself is small and
+    fast, so contention is brief.
+    """
+    lock = path.with_suffix(path.suffix + '.lock')
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except (FileExistsError, PermissionError):
+            # FileExistsError: another holder has the lock.
+            # PermissionError: Windows raises this, not FileExistsError, when
+            # the holder unlinks the lock in the instant between our create
+            # and its release. It means "contended", so retry either way.
+            try:
+                if time.time() - lock.stat().st_mtime > timeout:
+                    lock.unlink(missing_ok=True)   # stale: a dead holder
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                # Never fail a run over history. Fall back to a plain append,
+                # which is the pre-lock behaviour: a rare lost row beats a
+                # raised exception on the one machine that is contended.
+                break
+            time.sleep(0.02)
+    try:
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(text)
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 def relative_target(args: Sequence[str], root: Path | str) -> tuple[str, ...]:
@@ -348,8 +396,7 @@ class RunLedgerSink(ResultSink):
             self.directory.mkdir(parents=True, exist_ok=True)
             self.path = self.directory / f'{context.started:%Y-%m}.jsonl'
             line = json.dumps(self.row(results, context), sort_keys=True)
-            with open(self.path, 'a', encoding='utf-8') as f:
-                f.write(line + '\n')
+            _locked_append(self.path, line + '\n')
             self.written = True
         except Exception as exc:  # history is nice to have, never worth a run
             self.error = str(exc)

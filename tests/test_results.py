@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 from soterix_qa_shared.qatouch.artifacts import (
@@ -348,6 +350,46 @@ def test_an_unarmed_run_writes_no_ledger_row(tmp_path):
     sink.finish([_r('t::a', 'passed')], _ctx())
     assert not (tmp_path / 'history').exists()
     assert sink.summary() == []
+
+
+def test_concurrent_armed_runs_lose_no_ledger_row(tmp_path):
+    """Two armed runs sharing a clone (a nightly overlapping a manual run on
+    the box) both append to the same month file. Windows open(path, "a") is
+    not atomic across handles, so this measured 38 of 40 rows before the
+    lock. Every row must survive now, with no corruption."""
+    d = tmp_path / 'history'
+
+    def a_run(i):
+        ctx = _ctx(run_key=f'r{i}', project_key='JlW1')
+        RunLedgerSink(d).finish([_r(f't::{i}', 'passed')], ctx)
+
+    threads = [threading.Thread(target=a_run, args=(i,)) for i in range(40)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    lines = (d / '2026-08.jsonl').read_text(encoding='utf-8').splitlines()
+    keys = {json.loads(ln)['run_key'] for ln in lines if ln.strip()}
+    assert len(lines) == 40                       # nothing lost
+    assert keys == {f'r{i}' for i in range(40)}   # every run, no dup
+    assert not list(d.glob('*.lock'))             # lock cleaned up
+
+
+def test_a_stale_lock_is_broken_so_a_dead_holder_cannot_wedge_it(tmp_path):
+    """A run that died holding the lock leaves the .lock file behind. A later
+    run must not wait forever: a lock older than the timeout is stale and
+    gets broken."""
+    from soterix_qa_shared.qatouch.results import _locked_append
+    target = tmp_path / '2026-08.jsonl'
+    target.write_text('', encoding='utf-8')
+    stale = tmp_path / '2026-08.jsonl.lock'
+    stale.write_text('', encoding='utf-8')
+    old = time.time() - 3600
+    os.utime(stale, (old, old))                   # an hour-old lock
+    _locked_append(target, 'row\n', timeout=0.5)
+    assert target.read_text(encoding='utf-8') == 'row\n'
+    assert not stale.exists()
 
 
 def test_the_ledger_is_written_even_when_the_upload_fails(tmp_path):
