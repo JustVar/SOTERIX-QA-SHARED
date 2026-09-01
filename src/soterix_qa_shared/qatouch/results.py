@@ -27,6 +27,7 @@ import os
 import subprocess
 import time
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,6 +92,10 @@ class RunContext:
     started: datetime
     ended: datetime
     env: str = 'unknown'
+    # The tenant within the env. One env can hold several (India and US both
+    # run on ENV=qa), so env alone cannot say which tenant a run hit. Empty
+    # when the consumer sets no BOX.
+    box: str = ''
     target: tuple[str, ...] = ()
     exitstatus: int | None = None
     run_key: str | None = None
@@ -108,20 +113,18 @@ class RunContext:
         return self.run_key is not None
 
 
-def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
-    """Append `text` to `path` under an exclusive cross-machine lock.
+@contextmanager
+def _file_lock(path: Path, timeout: float = 10.0):
+    """Hold an exclusive cross-machine lock over `path` for the block.
 
-    A plain `open(path, 'a')` is NOT atomic across handles on Windows, and
-    two armed runs sharing a clone (a nightly overlapping a manual run on
-    the box) then lose a whole row with no corruption to show for it.
-    Measured: 40 concurrent appends produced 38 lines. Silent loss is the
-    exact class the ledger exists to prevent, so the append takes a lock.
-
-    The lock is a sibling `.lock` file claimed with O_CREAT|O_EXCL, which is
-    atomic on every OS and needs no third-party dependency. A holder that
-    dies leaves the file behind, so a lock older than the timeout is treated
-    as stale and broken, bounding the wait. The write itself is small and
-    fast, so contention is brief.
+    The lock is a sibling `.lock` file claimed with O_CREAT|O_EXCL, atomic on
+    every OS with no third-party dependency. A holder that dies leaves the
+    file behind, so a lock older than the timeout is treated as stale and
+    broken, which bounds the wait. Past the deadline the block runs anyway:
+    a rare unserialized write beats raising into a test run over bookkeeping.
+    Windows raises PermissionError, not FileExistsError, when a holder unlinks
+    the lock in the instant between our create and its release, so both mean
+    "contended" and retry.
     """
     lock = path.with_suffix(path.suffix + '.lock')
     deadline = time.monotonic() + timeout
@@ -131,10 +134,6 @@ def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
             os.close(fd)
             break
         except (FileExistsError, PermissionError):
-            # FileExistsError: another holder has the lock.
-            # PermissionError: Windows raises this, not FileExistsError, when
-            # the holder unlinks the lock in the instant between our create
-            # and its release. It means "contended", so retry either way.
             try:
                 if time.time() - lock.stat().st_mtime > timeout:
                     lock.unlink(missing_ok=True)   # stale: a dead holder
@@ -142,16 +141,59 @@ def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
             except OSError:
                 pass
             if time.monotonic() > deadline:
-                # Never fail a run over history. Fall back to a plain append,
-                # which is the pre-lock behaviour: a rare lost row beats a
-                # raised exception on the one machine that is contended.
                 break
             time.sleep(0.02)
     try:
-        with open(path, 'a', encoding='utf-8') as f:
-            f.write(text)
+        yield
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
+    """Append `text` to `path` under the file lock.
+
+    A plain `open(path, 'a')` is NOT atomic across handles on Windows, and
+    two armed runs sharing a clone (a nightly overlapping a manual run on
+    the box) then lose a whole row with no corruption to show for it.
+    Measured: 40 concurrent appends produced 38 lines. Silent loss is the
+    exact class the ledger exists to prevent, so the append takes the lock.
+    """
+    with _file_lock(path, timeout), open(path, 'a', encoding='utf-8') as f:
+        f.write(text)
+
+
+def write_json_atomic(path: Path, data: Any) -> None:
+    """Write JSON so a crash mid-write cannot leave a half-file.
+
+    The old failure log used a plain `json.dump(f)`: interrupted, it left a
+    truncated file, and the next read caught the JSONDecodeError and treated
+    the queue as EMPTY - silently discarding every previously-saved retry.
+    This writes a temp sibling and os.replace()s it in, which is atomic, so a
+    reader sees either the whole old file or the whole new one, never a stub.
+    """
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+
+
+def locked_json_append(path: Path, entry: dict, timeout: float = 10.0) -> None:
+    """Append one entry to a JSON list file under the lock, atomically.
+
+    The read-modify-write used to be unlocked: a retry CLI writing the log
+    while a session appended to it could clobber the session's new failure.
+    The whole read-append-write now holds the lock, and the write is atomic.
+    """
+    with _file_lock(path, timeout):
+        existing: list = []
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding='utf-8'))
+            except (json.JSONDecodeError, ValueError):
+                existing = []
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(entry)
+        write_json_atomic(path, existing)
 
 
 def relative_target(args: Sequence[str], root: Path | str) -> tuple[str, ...]:
@@ -369,6 +411,7 @@ class RunLedgerSink(ResultSink):
         row = {
             'at': context.started.isoformat(timespec='seconds'),
             'env': context.env,
+            **({'box': context.box} if context.box else {}),
             'branch': context.branch,
             'commit': context.commit,
             'run_key': context.run_key,

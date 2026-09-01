@@ -547,6 +547,7 @@ class QATouchReporter:
             started=self.started,
             ended=datetime.now(UTC),
             env=os.environ.get('ENV', 'unknown'),
+            box=os.environ.get('BOX', ''),
             target=self.target,
             exitstatus=exitstatus,
             run_key=self.run_key,

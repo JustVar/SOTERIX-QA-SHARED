@@ -376,6 +376,49 @@ def test_concurrent_armed_runs_lose_no_ledger_row(tmp_path):
     assert not list(d.glob('*.lock'))             # lock cleaned up
 
 
+def test_concurrent_failure_log_appends_lose_nothing(tmp_path):
+    """A retry CLI writing the failure log while a session appends to it used
+    to clobber the session's new entry (unlocked read-modify-write). The
+    locked append serializes them, so every entry survives."""
+    from soterix_qa_shared.qatouch.results import locked_json_append
+    log = tmp_path / 'upload_failures.json'
+
+    def add(i):
+        locked_json_append(log, {'run_key': f'r{i}', 'results': [{'case': f'TR{i}'}]})
+
+    threads = [threading.Thread(target=add, args=(i,)) for i in range(40)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    got = json.loads(log.read_text(encoding='utf-8'))
+    assert len(got) == 40
+    assert len({e['run_key'] for e in got}) == 40
+
+
+def test_an_atomic_write_leaves_no_stub_and_no_temp(tmp_path):
+    """A half-written failure log used to read as an empty queue and discard
+    every saved retry. The atomic write replaces the file whole, so a reader
+    sees all-old or all-new, and no .tmp is left behind."""
+    from soterix_qa_shared.qatouch.results import write_json_atomic
+    log = tmp_path / 'q.json'
+    write_json_atomic(log, [{'a': 1}])
+    write_json_atomic(log, [{'a': 1}, {'b': 2}])
+    assert json.loads(log.read_text(encoding='utf-8')) == [{'a': 1}, {'b': 2}]
+    assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_a_corrupt_failure_log_is_not_appended_onto_blindly(tmp_path):
+    """A truncated log reads as empty rather than raising, and the append
+    starts a fresh list - it does not crash the save path."""
+    from soterix_qa_shared.qatouch.results import locked_json_append
+    log = tmp_path / 'q.json'
+    log.write_text('[{"partial": ', encoding='utf-8')      # truncated
+    locked_json_append(log, {'run_key': 'r1'})
+    got = json.loads(log.read_text(encoding='utf-8'))
+    assert got == [{'run_key': 'r1'}]
+
+
 def test_a_stale_lock_is_broken_so_a_dead_holder_cannot_wedge_it(tmp_path):
     """A run that died holding the lock leaves the .lock file behind. A later
     run must not wait forever: a lock older than the timeout is stale and
@@ -423,6 +466,27 @@ def test_the_ledger_is_written_even_when_the_upload_fails(tmp_path):
     assert len(lines) == 1
     assert json.loads(lines[0])['counts'] == {'passed': 1, 'failed': 0, 'skipped': 0}
     assert ledger.written is True
+
+
+def test_the_ledger_row_records_the_box_when_set(tmp_path):
+    """One env can hold several tenants (India and US both on ENV=qa), so the
+    row carries the box too - otherwise a reader cannot tell which tenant a
+    run hit."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed')],
+                _ctx(run_key='d6pw', env='qa', box='india', project_key='JlW1'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert row['env'] == 'qa'
+    assert row['box'] == 'india'
+
+
+def test_the_ledger_row_omits_box_when_unset_so_old_rows_still_compare(tmp_path):
+    """A repo that sets no BOX writes no box key, so a single-tenant repo's
+    rows stay byte-for-byte what they were."""
+    sink = RunLedgerSink(tmp_path / 'history')
+    sink.finish([_r('t::a', 'passed')], _ctx(run_key='d6pw', env='qa'))
+    row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
+    assert 'box' not in row
 
 
 def test_an_armed_run_appends_one_line(tmp_path):

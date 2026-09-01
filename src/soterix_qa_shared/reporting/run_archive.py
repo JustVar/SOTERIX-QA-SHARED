@@ -175,6 +175,11 @@ TERMINAL_ADVISORY_MAX = 40
 # The total cap stops one-off targets from accumulating folders forever.
 KEEP_RUNS = 20
 KEEP_RUNS_TOTAL = 100
+# A byte ceiling on top of the count caps. A single retain-on-failure trace
+# of a livestream test reaches ~920 MB, so 20 near-duplicates of one slug
+# could fill a laptop disk while staying under the count cap. Overridable
+# with QA_ARCHIVE_MAX_GB. The newest run is never pruned for size.
+DEFAULT_MAX_GB = 10
 
 # Folder-name slug from the invocation. Shorter than the 120/150 name caps:
 # the slug is a label, not an identifier, and every file the run produced
@@ -837,6 +842,54 @@ def _prune_runs(runs_dir: Path, keep: int = KEEP_RUNS,
             log.info(f'run_archive: pruned old run {name}')
         except OSError as e:
             log.warning(f'run_archive: could not prune {name}: {e}')
+    _prune_by_size(runs_dir)
+
+
+def _dir_bytes(path: Path) -> int:
+    """Total bytes under a directory. Best effort - a file that vanishes
+    mid-walk (a concurrent prune) is skipped, not fatal."""
+    total = 0
+    for p in path.rglob('*'):
+        try:
+            if p.is_file():
+                total += p.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _prune_by_size(runs_dir: Path) -> None:
+    """Remove oldest runs until the archive is under the byte ceiling.
+
+    Runs after the count-based prune. The newest run is never removed for
+    size: a single run over the cap (one huge livestream trace) is kept, or
+    the plugin would delete the very evidence a developer is about to open.
+    """
+    try:
+        max_gb = float(os.environ.get('QA_ARCHIVE_MAX_GB', DEFAULT_MAX_GB))
+    except (TypeError, ValueError):
+        max_gb = DEFAULT_MAX_GB
+    ceiling = int(max_gb * 1024 ** 3)
+    runs = sorted((p for p in runs_dir.iterdir()
+                   if p.is_dir() and RUN_DIR_RE.match(p.name)),
+                  key=lambda p: p.name)          # oldest first
+    if len(runs) <= 1:
+        return
+    sizes = {p: _dir_bytes(p) for p in runs}
+    used = sum(sizes.values())
+    newest = runs[-1]
+    for p in runs:
+        if used <= ceiling:
+            break
+        if p is newest:
+            continue                             # never the newest
+        try:
+            shutil.rmtree(p)
+            used -= sizes[p]
+            log.info(f'run_archive: pruned {p.name} for size '
+                     f'(archive over {max_gb} GB)')
+        except OSError as e:
+            log.warning(f'run_archive: could not size-prune {p.name}: {e}')
 
 
 def _load_entries(runs_dir: Path) -> list[dict]:

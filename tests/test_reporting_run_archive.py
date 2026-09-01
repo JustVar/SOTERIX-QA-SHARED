@@ -114,6 +114,31 @@ def test_prune_keeps_the_newest_20():
     assert ra.KEEP_RUNS == 20
 
 
+def test_size_prune_removes_oldest_over_the_byte_ceiling(tmp_path, monkeypatch):
+    """The count caps let 20 near-duplicate livestream traces (~920 MB each)
+    fill a disk. The byte ceiling removes oldest until under, keeping newest."""
+    monkeypatch.setenv('QA_ARCHIVE_MAX_GB', '0.00001')     # 10 KB
+    for h in (8, 9, 10):
+        d = tmp_path / f'2026-09-01_{h:02d}-00-00__x'
+        d.mkdir()
+        (d / 'big.bin').write_bytes(b'0' * 8000)           # 3 x 8 KB > 10 KB
+    ra._prune_by_size(tmp_path)
+    left = sorted(p.name for p in tmp_path.iterdir() if p.is_dir())
+    assert '2026-09-01_10-00-00__x' in left                # newest kept
+    assert len(left) < 3                                   # something pruned
+
+
+def test_a_single_over_cap_run_is_never_size_pruned(tmp_path, monkeypatch):
+    """Deleting the only run because it is big would delete the evidence a
+    developer is about to open."""
+    monkeypatch.setenv('QA_ARCHIVE_MAX_GB', '0.000001')    # 1 KB
+    d = tmp_path / '2026-09-01_10-00-00__x'
+    d.mkdir()
+    (d / 'huge.bin').write_bytes(b'0' * 9000)
+    ra._prune_by_size(tmp_path)
+    assert d.exists()
+
+
 def test_prune_nothing_at_or_under_the_cap():
     """At or under the cap, nothing is pruned."""
     assert ra._select_prunable([_run_name(i) for i in range(1, 21)]) == []

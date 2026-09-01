@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 from soterix_qa_shared.qatouch.layout import paths_for
+from soterix_qa_shared.qatouch.results import write_json_atomic
 
 # Set by configure(); read at call time so tests can patch them.
 FAILURE_LOG_PATH: Path | None = None
@@ -205,8 +206,7 @@ def _park_unreplayable(stale: list[dict]) -> None:
             existing = json.loads(UNREPLAYABLE_PATH.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, ValueError):
             existing = []
-    UNREPLAYABLE_PATH.write_text(json.dumps(existing + stale, indent=2),
-                                 encoding='utf-8')
+    write_json_atomic(UNREPLAYABLE_PATH, existing + stale)
     empty = [e for e in stale if not (e.get('results') or [])]
     keyed = len(stale) - len(empty)
     # A key that did not resolve names a case the run does not contain, and a
@@ -276,8 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         if transient:
             # Key-based entries a network blip left unresolved: keep them
             # queued for the next run rather than dropping them.
-            with open(FAILURE_LOG_PATH, 'w', encoding='utf-8') as f:
-                json.dump(transient, f, indent=2)
+            write_json_atomic(FAILURE_LOG_PATH, transient)
             print(f'  {len(transient)} entr(y/ies) could not be resolved this '
                   f'time and stay queued for retry.')
         else:
@@ -338,8 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     # too, so a flaky read never drops a recoverable upload.
     remaining.extend(transient)
     if remaining:
-        with open(FAILURE_LOG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(remaining, f, indent=2)
+        write_json_atomic(FAILURE_LOG_PATH, remaining)
         print(f'\n  Retried: {succeeded} succeeded, {len(remaining)} still failing')
         return 1
     FAILURE_LOG_PATH.unlink()

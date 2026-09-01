@@ -326,7 +326,6 @@ class QATouchUploadSink(ResultSink):
         The entry shape is a contract with the retry CLI and each repo's
         validate_run - see qatouch.artifacts.FAILURE_ENTRY_FIELDS.
         """
-        import json
         path = self.failure_log_path
         if path is None:
             log.error('QA Touch: no failure log path configured - '
@@ -334,16 +333,11 @@ class QATouchUploadSink(ResultSink):
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-
-            existing = []
-            if path.exists():
-                try:
-                    with open(path) as f:
-                        existing = json.load(f)
-                except (json.JSONDecodeError, ValueError):
-                    existing = []
-
-            existing.append({
+            # Locked and atomic: a retry CLI writing the log at the same time
+            # can no longer clobber this failure, and an interrupted write can
+            # no longer truncate the file into a queue that reads as empty.
+            from soterix_qa_shared.qatouch.results import locked_json_append
+            locked_json_append(path, {
                 'timestamp': datetime.now(UTC).isoformat(),
                 'project_key': self.project_key,
                 'run_key': self.run_key,
@@ -352,10 +346,6 @@ class QATouchUploadSink(ResultSink):
                 'comment': comment,
                 'error': str(error),
             })
-
-            with open(path, 'w') as f:
-                json.dump(existing, f, indent=2)
-
             self.stats['saved_for_retry'] = len(results_payload)
             log.info(f'QA Touch: Saved {len(results_payload)} results to '
                      f'{path} for later retry')
