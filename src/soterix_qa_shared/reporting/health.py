@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Health summary across runs - moved to the shared package.
 
 Health summary across archived runs -- CLI.
