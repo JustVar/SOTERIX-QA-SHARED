@@ -1,9 +1,9 @@
-# Run history
+# Run History
 
 One short line per run, tracked in git. This is the only thing a test run
 leaves behind that belongs in a repository.
 
-## What is and is not tracked
+## What Is and Is Not Tracked
 
 | | Where | Tracked | Why |
 |---|---|---|---|
@@ -19,7 +19,7 @@ Those cannot be reconstructed from a directory that only ever holds the
 latest run, and QA Touch will not answer them either if it is ever migrated
 away from.
 
-## Only armed runs
+## Only Armed Runs
 
 A run is ledgered when it was ARMED to upload to QA Touch, that is,
 `--qatouch-upload` *and* a run key. Nothing else is.
@@ -37,7 +37,7 @@ would leave every developer with a dirty working tree after each run.
 "Armed" already means "this was an official run", so nobody has to remember
 a flag. `--no-history` opts out of a single armed run.
 
-## The row
+## The Row
 
 ```json
 {"at": "2026-08-28T19:37:45+00:00", "branch": "main", "commit": "0f912d0",
@@ -57,7 +57,7 @@ a flag. `--no-history` opts out of a single armed run.
 - `branch` and `commit` are best effort. A tarball checkout or a machine with
   no git records `null` rather than failing the run.
 
-## Rules for the file
+## Rules for the File
 
 **Append only.** A row that changes is a row that cannot be trusted. Never
 edit or reorder existing lines.
@@ -77,7 +77,7 @@ reports/
 !history/
 ```
 
-## Reading it
+## Reading It
 
 When did a test start failing:
 

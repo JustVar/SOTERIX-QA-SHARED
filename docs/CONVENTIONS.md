@@ -32,7 +32,7 @@ identical public surfaces was produced by comparing their ASTs and was wrong
 in twelve places, because annotated assignments parse differently. Importing
 both and diffing `dir()` gave the truth.
 
-## Writing the code
+## Writing the Code
 
 **Read module globals at call time**, so a consumer's `monkeypatch` reaches
 the running code. This is rule 6 in `docs/RULES.md` and it is the seam the
@@ -73,7 +73,7 @@ Numbers in prose go stale. Write the number only where it is measured, or
 say where to read it. A docstring here once quoted a lint total that had
 already moved.
 
-## Running the tests
+## Running the Tests
 
 ```bash
 python -m pytest
@@ -93,7 +93,7 @@ happened twice, at 0.16.1 against 0.16.2 and at 0.16.2 against 0.16.5.
 `tools/prose_check.py`. No em dashes, no smart quotes, no exclamation marks,
 no hype words.
 
-## Cross-platform
+## Cross-Platform
 
 Development is on Windows and CI is on Linux, so anything touching a path
 is suspect until the matrix has run it.
@@ -106,7 +106,7 @@ bit is a lint finding on Linux and invisible on Windows.
 Record paths as posix, and relative to a root, whenever they are written to
 a file that other people read.
 
-## Before opening a pull request
+## Before Opening a Pull Request
 
 - The package's tests, `ruff` and the prose check pass.
 - At least one consumer's suites and shim guards pass against the edit,

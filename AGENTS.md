@@ -1,4 +1,4 @@
-# soterix-qa-shared - guidance for AI coding tools
+# Soterix QA Shared - Guidance for AI Coding Tools
 
 If you use an AI tool to write, test, or update anything in this repo, point
 it here first.
@@ -22,7 +22,7 @@ why the guards go in before the consumers do. Read before making changes:
 4. **`docs/RUN_HISTORY.md`** - what a test run leaves behind, and why exactly
    one written path is tracked in git.
 
-## What this repo is careful about
+## What This Repo Is Careful About
 
 **A test that passes for the wrong reason.** Several tests here exist because
 a mutation survived: the code was wrong and the suite stayed green. If you
@@ -44,7 +44,7 @@ site-packages. Paths arrive from the consumer through `configure(root)`, and
 decision, injected by the consumer's shim. With no policy, nothing resolves
 and the reporter says so - it never falls back to permissive.
 
-## Before you commit
+## Before You Commit
 
 ```bash
 python -m pytest tests/ -q          # 154 tests, all offline
@@ -60,7 +60,7 @@ and link targets are stripped before anything is counted.
 Commit messages describe what the change does, in the repo's voice. No AI
 attribution, no co-author lines, no model names.
 
-## Verifying a change
+## Verifying a Change
 
 Unit tests are not enough for this package. Two defects reached a commit that
 the suite could not see, and both were caught by *running* the thing:

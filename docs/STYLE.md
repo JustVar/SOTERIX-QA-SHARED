@@ -1,4 +1,4 @@
-# Writing style
+# Writing Style
 
 House rules for prose in this repo: README files, docs, code comments,
 docstrings, error messages, log lines, and commit messages. They do not apply
@@ -13,7 +13,7 @@ the short version). AI coding tools pick them up through `AGENTS.md` at the
 repo root. If you use one to write, test, or update files here, keep it
 pointed at those rules.
 
-## Core rules
+## Core Rules
 
 - Use active voice. Write "the parser reads the file", not "the file is read
   by the parser". Use passive only when the actor is unknown.
@@ -33,7 +33,7 @@ pointed at those rules.
 - No exclamation marks. No emoji in docs, comments, or error messages.
 - Plain ASCII quotes and apostrophes only.
 
-## Delete on sight
+## Delete on Sight
 
 Hype words carry no facts. Delete them or replace them with a measurement:
 seamless, robust, powerful, cutting-edge, battle-tested, comprehensive,
@@ -44,7 +44,7 @@ Filler adds length and nothing else. Delete the whole phrase: it is important
 to note that, please note that, as mentioned above, needless to say,
 essentially, basically, simply, very, in conclusion.
 
-## Shapes to avoid
+## Shapes to Avoid
 
 - The negation flip: "It is not just X. It is Y."
 - The setup question: "So what does this do? Let us look."
@@ -52,7 +52,7 @@ essentially, basically, simply, very, in conclusion.
 - The rule of three as decoration: "fast, simple, and reliable."
 - A closing summary that repeats what the reader just read.
 
-## Per artifact
+## Per Artifact
 
 - **README:** first sentence says what the thing is. Second says what problem
   it solves. Show a working command before the options.

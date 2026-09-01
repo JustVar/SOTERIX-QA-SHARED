@@ -1,4 +1,4 @@
-# soterix-qa-shared
+# Soterix QA Shared
 
 One installable package for the QA Touch pipeline, so the UI repo, the API
 repo and future product repos (Mobile, C2C, Neurosen) share one copy instead
@@ -29,7 +29,7 @@ pip install -e ../soterix-qa-shared[reporter]  # adds pytest, for test repos
 Base install stays client-only so a script consumer (the UI canary job) does
 not drag in a test runner.
 
-## Where it stands
+## Where It Stands
 
 **Steps 1 to 6 complete.** 317 tests, ruff clean, wheel builds and imports in a
 clean interpreter. Both consumers are merged to main and green on Linux CI
@@ -67,7 +67,7 @@ dashboard feed plugs in without reopening the reporter. Each sink decides
 when it applies, which is why the record is written on
 every session that ran a test and the ledger only on armed ones.
 
-## Next, in order
+## Next, in Order
 
 | Step | State | What |
 |---|---|---|
@@ -274,7 +274,7 @@ Raghavendra-aski has write on the UI repo, and neither can read this one, so
 the clone step in both READMEs returns 404 for them and their checkout
 cannot run. No credential setup fixes that. Two read grants do.
 
-## What is left
+## What Is Left
 
 Both consumers are merged to main, pinned to `v0.20.0`, and green on Linux
 CI, including a shim matrix across 3.11 to 3.14.
@@ -300,7 +300,7 @@ v0.20.0.
 **Still not built:** step 2b's reporting stack, which now also waits on
 Soterix-API-QA PR #2 and its own `_support/reporting.py`.
 
-## Follow-ups the migration must not forget
+## Follow-ups the Migration Must Not Forget
 
 - The reporter's lint findings moved with the code. The UI repo silenced none
   of them. It carried 10. Nine are now silenced by file in this package's

@@ -1,10 +1,10 @@
-# Merge and release runbook
+# Merge and Release Runbook
 
 How a change gets into this package, and how it reaches the two repos that
 depend on it. The design rules a change must satisfy are in `docs/RULES.md`.
 This file is only the process around them.
 
-## The two remotes
+## The Two Remotes
 
 `origin` carries BOTH push URLs, personal and company, so a plain `git push`
 updates both organisations at once:
@@ -21,7 +21,7 @@ organisation moved, and the two have drifted.
 `company` is the authority. Its CI gates every merge, and its tags are what
 the consumers pin. The personal mirror is a backup.
 
-## Making a change
+## Making a Change
 
 Work against a consumer, not against the unit tests alone. The unit tests
 here have passed while a change still broke both repos, because what they
@@ -81,7 +81,7 @@ Steps 4 and 5 are where a release goes wrong quietly. A tag that is never
 pushed, or a consumer that is never repinned, leaves CI installing an older
 package while `main` here looks finished.
 
-## Adding a layer
+## Adding a Layer
 
 A new subpackage needs its `[project] description` and the package docstring
 widened in the same commit, because rule 4 forces a version bump there
@@ -91,7 +91,7 @@ New gates go in `soterix_qa_shared.gates` and take the repo root and their
 own configuration as arguments. Rule 5: the package holds no repo-relative
 path.
 
-## After any release
+## After Any Release
 
 - Both consumers pin the same tag. Two repos on different tags is drift.
 - `STATUS.md` reflects what shipped, including the test count.
