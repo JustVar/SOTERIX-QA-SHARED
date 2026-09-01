@@ -6,6 +6,7 @@ Standard library only, and nothing here knows about QA Touch or pytest:
   * `products` QA Touch project keys and the product each one names
   * `branding` the company logo, embedded into a generated page
   * `htmlblocks` inline evidence blocks for a pytest-html report
+  * `email`      mailing an HTML report through Microsoft Graph ([email] extra)
 
 Two of the three need something from the consumer before they work, because
 neither a repo root nor a directory layout is the package's to guess:
