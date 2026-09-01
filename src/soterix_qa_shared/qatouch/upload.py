@@ -105,6 +105,9 @@ class QATouchUploadSink(ResultSink):
         # is not the same as a run with no cases, so summary() stays quiet.
         self.run_case_count: int | None = None
         self.uncovered_cases: list[str] = []
+        # True when the read-back could not run at all (network), so the
+        # upload is unverified rather than confirmed. Saved for retry.
+        self.verify_unavailable: bool = False
 
     # -- resolution ---------------------------------------------------------
 
@@ -278,6 +281,7 @@ class QATouchUploadSink(ResultSink):
         Traps 1 and 2: QA Touch reports success for uploads it silently
         discards, so an upload is not done until the run agrees.
         """
+        self.verify_unavailable = False
         report = None
         for attempt in range(3):
             try:
@@ -291,8 +295,17 @@ class QATouchUploadSink(ResultSink):
                                 f'waiting 30s (attempt {attempt + 1}/3)')
                     time.sleep(30)
                     continue
-                log.warning(f'QA Touch: could not verify the upload: {e}')
-                return True  # do not fail the run over a read-back problem
+                # The read-back could not run. The POST may have landed or
+                # been silently discarded, which is exactly the case verify
+                # exists to catch, so booking it success would re-open the
+                # accept-and-ignore trap through the back door. Treat it as
+                # unverified and save for retry: a replay re-writes the same
+                # statuses and reads back later, so at worst it re-confirms an
+                # upload that did land.
+                log.warning(f'QA Touch: could not verify the upload ({e}). '
+                            f'Saving for retry rather than assuming it landed.')
+                self.verify_unavailable = True
+                return False
 
         problems = report['mismatched'] + [f'{c}: not in run' for c in report['missing']]
         if problems:
@@ -402,8 +415,17 @@ class QATouchUploadSink(ResultSink):
             from soterix_qa_shared.qatouch.client import QATouchClient
             client = QATouchClient()
         except Exception as e:
-            log.error(f'QA Touch: Failed to initialize client: {e}')
+            # The commonest cause is a missing API key, e.g. mid-rotation.
+            # Every other failure path in finish() saves for retry; this one
+            # used to drop the run's results on the floor. Save the case-key
+            # payload (the retry CLI resolves keys to codes) so a replay lands
+            # them once the key is back.
+            log.error(f'QA Touch: Failed to initialize client: {e}. '
+                      f'Saving {len(case_keys)} result(s) for retry.')
             self.stats['errors'] += 1
+            self._save_failed_results(
+                [{'case': k, 'status': self.statuses[k]} for k in case_keys],
+                comment, f'Client init failed ({e}) - saved for retry')
             return
 
         try:
@@ -506,8 +528,12 @@ class QATouchUploadSink(ResultSink):
                 if self._upload_with_retry(_plain_upload):
                     success = self._verify_upload(client, results_payload)
             if not success:
-                failure_reason = ('Upload reported success but the read-back '
-                                  'shows the statuses did not land')
+                failure_reason = (
+                    'Upload posted but the read-back could not run, so it is '
+                    'unverified - saved for retry'
+                    if getattr(self, 'verify_unavailable', False)
+                    else 'Upload reported success but the read-back shows the '
+                         'statuses did not land')
 
         if success:
             self.stats['uploaded'] = len(results_payload)

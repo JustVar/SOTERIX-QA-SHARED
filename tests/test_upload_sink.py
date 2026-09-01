@@ -171,14 +171,51 @@ def test_verify_passes_when_everything_landed(tmp_path):
     assert s._verify_upload(client, [{'case': 'TR0262', 'status': 1}]) is True
 
 
-def test_verify_does_not_fail_the_run_on_a_readback_error(tmp_path):
-    """A read-back problem is not evidence the upload failed - warn, do not
-    block. A 429 is retried and then conceded."""
+def test_a_readback_that_cannot_run_is_unverified_not_a_success(tmp_path):
+    """A read-back that raises is NOT evidence the upload landed. QA Touch
+    accepts-and-ignores, so booking an unrunnable read-back as success
+    re-opens the exact trap verify exists to catch. It returns False and
+    flags the upload unverified, so finish() saves it for retry. This
+    reverses the old behaviour, which booked it as success."""
+    s = _sink(tmp_path)
+    client = MagicMock()
+    client.verify_results_landed.side_effect = ConnectionError('tunnel dropped')
+    assert s._verify_upload(client, [{'case': 'TR0262', 'status': 1}]) is False
+    assert s.verify_unavailable is True
+
+
+def test_client_init_failure_saves_for_retry_not_drops(monkeypatch, tmp_path):
+    """A missing API key (mid-rotation) must not drop the run's results. Like
+    every other failure path in finish(), it saves them for retry."""
+    import soterix_qa_shared.qatouch.client as cmod
+    def boom(*a, **k):
+        raise RuntimeError('QATOUCH_API_KEY must be provided')
+    monkeypatch.setattr(cmod, 'QATouchClient', boom)
+    from datetime import UTC, datetime
+
+    from soterix_qa_shared.qatouch.results import RunContext, RunResult
+    log = tmp_path / 'fail.json'
+    s = _sink(tmp_path, failure_log_path=log)
+    s.statuses = {'K1': 1}
+    s.case_to_code = {'K1': 'TR1'}
+    s.case_nodeids = {'K1': ['t::a']}
+    s.case_projects = {'K1': 'JlW1'}
+    ctx = RunContext(started=datetime(2026, 9, 1, tzinfo=UTC),
+                     ended=datetime(2026, 9, 1, tzinfo=UTC),
+                     run_key='RUN1', project_key='JlW1')
+    s.finish([RunResult(nodeid='t::a', outcome='passed', case_key='K1')], ctx)
+    assert log.exists(), 'client-init failure dropped the results instead of saving'
+
+
+def test_a_persistent_429_read_back_is_conceded_as_unverified(tmp_path):
+    """A rate-limited read-back retries three times, then concedes as
+    unverified rather than assuming it landed."""
     s = _sink(tmp_path)
     client = MagicMock()
     client.verify_results_landed.side_effect = RuntimeError('429')
-    assert s._verify_upload(client, [{'case': 'TR0262', 'status': 1}]) is True
+    assert s._verify_upload(client, [{'case': 'TR0262', 'status': 1}]) is False
     assert client.verify_results_landed.call_count == 3
+    assert s.verify_unavailable is True
 
 
 def test_client_has_no_update_playwright_results():
