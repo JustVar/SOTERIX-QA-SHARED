@@ -84,9 +84,13 @@ pytest --qatouch-upload --qatouch-run <RUN_KEY>
 Replay anything that failed to upload:
 
 ```bash
-python tools/retry_uploads.py --dry-run   # show what is pending
-python tools/retry_uploads.py             # send it
+python -m soterix_qa_shared.qatouch.retry --dry-run   # show what is pending
+python -m soterix_qa_shared.qatouch.retry             # send it
 ```
+
+In a test repo the same CLI is reachable as `python tools/retry_uploads.py`,
+which is a shim over this module. That path does not exist here, because
+this repo has no `tools/` shims of its own.
 
 Opt out of the local artifacts for one run with `--no-run-record` or
 `--no-history`.
@@ -132,10 +136,13 @@ destinations, and must never fail the test session itself.
 
 ```bash
 pip install -e .[dev]
-python -m pytest tests/ -q      # 154 tests, all offline: no network, no browser
+python -m pytest                # all offline: no network, no browser
 python -m ruff check .
 python tools/prose_check.py     # the writing rules, mechanical ones only
 ```
+
+A test count belongs in the run's own output, not in a sentence that goes
+stale. This one said 154 while the suite had grown to 317.
 
 The dev toolchain is pinned exactly rather than floored. A floating pin makes
 a lint verdict depend on when a machine last installed, which is how a change
