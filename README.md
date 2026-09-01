@@ -1,4 +1,4 @@
-# soterix-qa-shared
+# Soterix QA Shared
 
 The QA Touch reporting pipeline for the Soterix test repositories, as one
 installable Python package. It stops the API client, the pytest reporter and
@@ -23,7 +23,7 @@ Install it editable only to change it.
 The base install stays client-only on purpose. A script that reads QA Touch
 does not need a test runner.
 
-## Report a test run to QA Touch
+## Report a Test Run to QA Touch
 
 Run the suite with the upload armed and a run key:
 
@@ -44,7 +44,7 @@ The summary prints what happened:
   Passed:     5
 ```
 
-## What it does
+## What It Does
 
 **Records every run.** The pytest plugin collects one result per test node
 id, then hands the finished run to each destination in turn.
@@ -76,7 +76,7 @@ Flags the pytest plugin adds:
 
 Environment variables:
 
-| Variable | Used for |
+| Variable | Used For |
 |---|---|
 | `QATOUCH_API_KEY` | QA Touch authentication. Required to upload. |
 | `QATOUCH_DOMAIN` | The QA Touch subdomain. |
@@ -88,11 +88,11 @@ Environment variables:
 | `JIRA_PROJECT_KEY` | Default Jira project. |
 | `BUG_CREATION_ENABLED` | Arms real bug creation. Any other value files nothing. |
 
-## Files it reads and writes
+## Files It Reads and Writes
 
 Paths are relative to the consumer repository's root.
 
-| Path | Tracked | What it holds |
+| Path | Tracked | What It Holds |
 |---|---|---|
 | `config/qatouch_case_mapping.json` | yes | Node id to case key. The only place mappings live. |
 | `history/YYYY-MM.jsonl` | yes | One line per armed run. See `docs/RUN_HISTORY.md`. |
@@ -100,7 +100,7 @@ Paths are relative to the consumer repository's root.
 | `logs/upload_failures.json` | no | Uploads to replay. |
 | `logs/upload_failures_unreplayable.json` | no | Failures no replay can fix. |
 
-## Command line tools
+## Command Line Tools
 
 Replay uploads that failed:
 
@@ -124,9 +124,9 @@ python tools/collect_floor.py --update   # record the current counts
 The gate itself is `soterix_qa_shared.gates.collect_floor`. pytest exits 5
 on zero collected, but reports nothing when a suite only shrinks.
 
-## What is in the package
+## What Is in the Package
 
-| Module | What it holds |
+| Module | What It Holds |
 |---|---|
 | `qatouch.client` | The QA Touch API client, status codes, case code helpers. |
 | `qatouch.reporter` | The pytest plugin: hooks, node id records, sink fan-out. |
@@ -143,7 +143,7 @@ on zero collected, but reports nothing when a suite only shrinks.
 | `reporting.branding` | The company logo, embedded into a report page. |
 | `gates.collect_floor` | Fails a run when a suite collects fewer tests. |
 
-## Add a destination
+## Add a Destination
 
 `ResultSink` is the extension point. Three sinks ship today: the local run
 record, the tracked ledger, and the QA Touch upload. A JUnit writer or a
@@ -189,7 +189,7 @@ Test a change against a real consumer before you tag it. The unit tests here
 cannot see the shim seam. A change has passed them while breaking both
 repositories.
 
-## Where to read next
+## Where to Read Next
 
 | | |
 |---|---|
