@@ -287,9 +287,14 @@ CI, including a shim matrix across 3.11 to 3.14.
 | Collected | 1416 | 84 |
 | Floor watches | whole repo, offline suites | whole repo, internal, integration |
 
-**The pipeline is proven end to end.** Two armed runs landed in QA Touch
-run **PgGMv** on 08/31, and the run was read back independently rather than
-trusting the upload's own answer: TR3681 to TR3685 all read Passed.
+**The pipeline is proven end to end, from BOTH consumers.** The API repo
+landed two armed runs in QA Touch run **PgGMv** on 08/31 (TR3681 to TR3685,
+all Passed on read-back). The UI repo landed its licenses proof in run
+**9e8Q7** on 09/01: 20 results, 19 Passed and 1 Blocked, all verified by an
+independent read-back. The dry run before it also proved the read-back
+guard with live data: an interceptor faked success, and the pipeline read
+the run, saw 20 Untested, and queued everything for retry instead of
+reporting done.
 
 The first run selected `tests/integration_api` and set four of the five
 cases, because the fifth maps to a test in `tests/internal_api`. Nothing in
