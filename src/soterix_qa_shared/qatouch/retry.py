@@ -116,16 +116,27 @@ def _load_failures() -> tuple[list | None, int]:
     return failures, 0
 
 
-def _resolve_stale(stale: list[dict], replayable: list[dict]) -> list[dict]:
-    """Turn key-based entries into code-based ones where the run allows."""
+def _resolve_stale(stale: list[dict], replayable: list[dict],
+                   transient: list[dict]) -> list[dict]:
+    """Turn key-based entries into code-based ones where the run allows.
+
+    Returns the entries that are GENUINELY unreplayable (case keys the run
+    does not contain). A network failure while resolving is not that: those
+    entries go to `transient`, which the caller keeps in the retry queue for
+    a later run rather than parking them as permanently dead. Before this, a
+    single flaky read during resolution parked a recoverable upload forever.
+    """
     try:
         # From the submodule, so a consumer shim aliased to it stays
         # patchable. See the note in upload.py.
         from soterix_qa_shared.qatouch.client import QATouchClient
         client = QATouchClient()
     except Exception as e:
+        # The client itself is unavailable (network, missing key). Every
+        # stale entry is transient, not unreplayable.
         print(f'  [{WARN}] could not resolve key-based entries: {e}')
-        return stale
+        transient.extend(stale)
+        return []
 
     still_stale = []
     for entry in stale:
@@ -134,7 +145,9 @@ def _resolve_stale(stale: list[dict], replayable: list[dict]) -> list[dict]:
                 entry.get('project_key', DEFAULT_PROJECT_KEY),
                 entry.get('run_key', ''))
         except Exception:
-            still_stale.append(entry)
+            # A read failure is transient. Keep the entry retryable rather
+            # than parking it as permanently unreplayable.
+            transient.append(entry)
             continue
         complete, translated = translate_keys_to_codes(entry, rows)
         if not translated:
@@ -240,11 +253,12 @@ def main(argv: list[str] | None = None) -> int:
 
     replayable = [e for e in failures if _replayable(e)]
     stale = [e for e in failures if not _replayable(e)]
+    transient: list[dict] = []
 
     # Key-based entries (saved when the run was unreachable) become
     # replayable once the run answers: resolve keys -> codes from its rows.
     if stale and not args.dry_run:
-        stale = _resolve_stale(stale, replayable)
+        stale = _resolve_stale(stale, replayable, transient)
 
     if args.dry_run:
         for i, entry in enumerate(failures, 1):
@@ -259,9 +273,17 @@ def main(argv: list[str] | None = None) -> int:
         _park_unreplayable(stale)
 
     if not replayable:
-        FAILURE_LOG_PATH.unlink()
-        print('  Nothing replayable remains. Failure log cleared.')
-        return 1 if stale else 0
+        if transient:
+            # Key-based entries a network blip left unresolved: keep them
+            # queued for the next run rather than dropping them.
+            with open(FAILURE_LOG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(transient, f, indent=2)
+            print(f'  {len(transient)} entr(y/ies) could not be resolved this '
+                  f'time and stay queued for retry.')
+        else:
+            FAILURE_LOG_PATH.unlink()
+            print('  Nothing replayable remains. Failure log cleared.')
+        return 1 if (stale or transient) else 0
 
     try:
         # From the submodule, so a consumer shim aliased to it stays
@@ -312,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f'[{PASS}] verified {len(report["landed"])} in run')
             succeeded += 1
 
+    # Transient key-based entries a network blip left unresolved stay queued
+    # too, so a flaky read never drops a recoverable upload.
+    remaining.extend(transient)
     if remaining:
         with open(FAILURE_LOG_PATH, 'w', encoding='utf-8') as f:
             json.dump(remaining, f, indent=2)

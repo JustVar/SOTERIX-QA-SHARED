@@ -339,14 +339,32 @@ def test_a_malformed_unreplayable_log_does_not_lose_the_new_entry(tmp_path, monk
     assert len(parked) == 1
 
 
-def test_an_unreachable_client_leaves_key_entries_alone(tmp_path, monkeypatch, capsys):
-    """A client that cannot start is not evidence the entries are junk."""
+def test_a_read_failure_during_resolution_is_transient_not_unreplayable(tmp_path, monkeypatch):
+    """The client starts, but the run's GET fails for one entry (a mid-resolve
+    network blip). That entry must stay queued, not be parked as dead."""
+    from unittest.mock import MagicMock
+    client = MagicMock()
+    client.get_all_test_run_results.side_effect = ConnectionError('read timed out')
+    monkeypatch.setattr(pkg_client, 'QATouchClient', MagicMock(return_value=client))
+    _write_log(tmp_path, [_entry([{'case': 'B869bm', 'status': 5}])])
+
+    assert retry.main([]) == 1
+    assert not (tmp_path / 'logs' / 'upload_failures_unreplayable.json').exists()
+    still = json.loads((tmp_path / 'logs' / 'upload_failures.json').read_text())
+    assert len(still) == 1
+
+
+def test_an_unreachable_client_keeps_key_entries_queued_not_parked(tmp_path, monkeypatch, capsys):
+    """A client that cannot start is a TRANSIENT failure, not evidence the
+    entries are junk. They stay in the retry queue for the next run, not
+    parked as permanently unreplayable - which is what a network blip during
+    resolution used to do."""
     monkeypatch.setattr(pkg_client, 'QATouchClient',
                         MagicMock(side_effect=RuntimeError('no credentials')))
     _write_log(tmp_path, [_entry([{'case': 'B869bm', 'status': 5}])])
 
     assert retry.main([]) == 1
-    parked = json.loads(
-        (tmp_path / 'logs' / 'upload_failures_unreplayable.json').read_text())
-    assert len(parked) == 1
+    assert not (tmp_path / 'logs' / 'upload_failures_unreplayable.json').exists()
+    still = json.loads((tmp_path / 'logs' / 'upload_failures.json').read_text())
+    assert len(still) == 1
     assert 'could not resolve key-based entries' in capsys.readouterr().out
