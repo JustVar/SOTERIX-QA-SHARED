@@ -242,13 +242,24 @@ produces a file to commit.
 
 **7. Docs.** Done 08/31, except one thing docs cannot fix.
 
-Both README Quickstarts are corrected. The API repo's never installed the
+Both README Quickstarts are corrected, and the setup they describe got
+shorter rather than better explained. The API repo's never installed the
 package at all: measured on a clean venv, following it exactly left
 `pytest tests/plugins` unable to collect, stopping at `ImportError: ...
 soterix-qa-shared is not installed`. The UI repo's had the install line but
-described it as "the second line" when it is the fifth. Both now say where
-to clone the sibling checkout from, and both say not to use
-`requirements-shared.txt` locally.
+described it as "the second line" when it is the fifth.
+
+**Setup is now one command.** `requirements.txt` in each consumer names this
+package over HTTPS, which is what the team's git already speaks, so the
+credential used for `git clone` is the one pip uses. Measured on a clean
+venv: `pip install -r requirements.txt` then `pytest tests/plugins` gives 13
+passed, with no second clone and no editable install.
+
+That deleted `requirements-shared.txt` from both repos, and with it the rule
+that one requirements file was for CI and the other was not. CI keeps the
+read-only deploy key and rewrites the single HTTPS url to SSH with `git
+config url. ... .insteadOf`. Cloning this repo is now only for CHANGING the
+package, where an editable install overrides the pin.
 
 `docs/CONVENTIONS.md` and `docs/MERGE_RUNBOOK.md` are written. Conventions
 covers the testing standard, with each rule attached to the incident that

@@ -26,10 +26,16 @@ cd ..                 # beside the test repo, not inside it
 git clone https://github.com/Soterix-Systems/SOTERIX-QA-SHARED.git soterix-qa-shared
 ```
 
-That is the only credential step. The install below is from disk, so it
-needs no key, no token and no SSH. CI is the exception: it installs from a
-pinned tag over SSH with a read-only deploy key, which is why
-`requirements-shared.txt` exists and why it is not for local use.
+That read access is the only credential step, and it is the same GitHub
+login your `git clone` already uses. No key, no token, no SSH.
+
+Most people never clone this repo at all. Each test repo's
+`requirements.txt` names this package over HTTPS, so `pip install -r
+requirements.txt` there installs it for them. Clone it only to CHANGE it.
+
+CI is the one exception. It has no HTTPS credential for a private repo, so
+it loads a read-only deploy key and rewrites that single url to SSH with
+`git config url. ... .insteadOf`.
 
 ## Install
 

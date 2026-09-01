@@ -73,8 +73,9 @@ merged change here reaches nobody. Five steps, in this order:
 
    The tag re-runs CI with the `tag-matches-version` job, which is skipped
    on ordinary pushes. Do not repin until it is green.
-5. **Repin each consumer** in its `requirements-shared.txt`, commit, push,
-   and confirm its CI is green against the new tag.
+5. **Repin each consumer** in its `requirements.txt`, on the
+   `soterix-qa-shared @ git+https://...@vX.Y.Z` line. Commit, push, and
+   confirm its CI is green against the new tag.
 
 Steps 4 and 5 are where a release goes wrong quietly. A tag that is never
 pushed, or a consumer that is never repinned, leaves CI installing an older
