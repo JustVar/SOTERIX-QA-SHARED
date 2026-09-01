@@ -75,7 +75,7 @@ every session that ran a test and the ledger only on armed ones.
 | 0 | **done** | Repo, CI, interpreter range, deploy key, shim matrix |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
-| 2b | shared slice done | `htmlblocks` extracted; the five big modules keep one consumer and wait on the design pass |
+| 2b | **done** | The whole reporting stack extracted: media, run_archive, run_report, health, email, and the reporting layout |
 | 3 | **done** | Jira layer |
 | 4 | **done** | Shims + guards, tagged **v0.16.0** |
 | 5 | **done** | API repo: pinned and shimmed, on `shim-migration` |

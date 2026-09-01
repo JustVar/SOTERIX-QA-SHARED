@@ -7,6 +7,11 @@ Standard library only, and nothing here knows about QA Touch or pytest:
   * `branding` the company logo, embedded into a generated page
   * `htmlblocks` inline evidence blocks for a pytest-html report
   * `email`      mailing an HTML report through Microsoft Graph ([email] extra)
+  * `media`       Playwright screenshot/trace capture (a pytest plugin)
+  * `run_archive` per-run evidence archiving (a pytest plugin)
+  * `run_report`  the run.html a failure is opened against
+  * `health`      the cross-run health.html and its CLI
+  * `layout`      one repo root -> every reporting path
 
 Two of the three need something from the consumer before they work, because
 neither a repo root nor a directory layout is the package's to guess:
