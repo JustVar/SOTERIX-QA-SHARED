@@ -5,6 +5,7 @@ Standard library only, and nothing here knows about QA Touch or pytest:
   * `paths`    fitting a file name under Windows' 260-character path limit
   * `products` QA Touch project keys and the product each one names
   * `branding` the company logo, embedded into a generated page
+  * `htmlblocks` inline evidence blocks for a pytest-html report
 
 Two of the three need something from the consumer before they work, because
 neither a repo root nor a directory layout is the package's to guess:
@@ -19,6 +20,9 @@ neither a repo root nor a directory layout is the package's to guess:
 The rest of the reporting stack (the archive, the run and health pages, the
 media capture, the mailer) stays in the UI repo until a second consumer
 needs it. It is 4,338 lines and wants its own design pass, not a move.
+Measured 09/01/2026: the API repo's own report helper turned out to overlap
+with none of it, so those helpers became `htmlblocks` and the five big
+modules still have exactly one consumer.
 """
 from .branding import COMPANY, favicon_link, header_logo
 from .paths import PATH_MAX, digest, fit_name, long_root_warning

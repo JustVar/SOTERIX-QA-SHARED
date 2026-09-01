@@ -51,6 +51,7 @@ against the v0.20.0 tag.
 | `jira.fields` | 243 | Mapping test data onto discovered custom fields |
 | `jira.client` | 208 | Creating an issue, or describing the one it would create |
 | `gates.collect_floor` | 140 | Failing a run when a suite collects fewer tests than before |
+| `reporting.htmlblocks` | 97 | Inline evidence blocks for a pytest-html report |
 
 Two design decisions worth knowing before reading the code:
 
@@ -74,7 +75,7 @@ every session that ran a test and the ledger only on armed ones.
 | 0 | **done** | Repo, CI, interpreter range, deploy key, shim matrix |
 | 1 | **done** | Client, reporter, sinks, retry CLI |
 | 2a | **done** | Moved `products`, `paths`, `branding` |
-| 2b | deferred | The rest of the reporting stack |
+| 2b | shared slice done | `htmlblocks` extracted; the five big modules keep one consumer and wait on the design pass |
 | 3 | **done** | Jira layer |
 | 4 | **done** | Shims + guards, tagged **v0.16.0** |
 | 5 | **done** | API repo: pinned and shimmed, on `shim-migration` |
@@ -302,8 +303,14 @@ the output said so, which is why `verify_results_landed` now reports run
 coverage. The same run also wrote absolute paths into the ledger, fixed in
 v0.20.0.
 
-**Still not built:** step 2b's reporting stack, which now also waits on
-Soterix-API-QA PR #2 and its own `_support/reporting.py`.
+**Still not built:** the five big reporting modules (4,338 lines). Measured
+09/01/2026 when PR #2's `_support/reporting.py` was examined for the
+reconciliation: it overlapped with NONE of them, so it became
+`reporting.htmlblocks` (the API repo's file is now a shim) and the five
+still have exactly one consumer. The recorded gate stands: they move when
+a second consumer needs them, after the design pass this file already
+sketches (exported surface incl. `_write_index`, the Playwright
+touchpoints, an evidence type for what the renderer consumes).
 
 ## Follow-ups the Migration Must Not Forget
 
