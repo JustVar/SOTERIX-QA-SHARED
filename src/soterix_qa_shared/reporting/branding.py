@@ -7,11 +7,9 @@ at build time, so they stay self-contained and an older report keeps the
 logo it was built with. A missing file leaves the page unbranded, which is
 the correct outcome: a report is still readable without a logo.
 
-The paths came from `Path('assets') / 'branding'`, relative to the working
-directory. That worked only because every caller happened to run from the
-repo root, and after packaging it would resolve against whatever directory
-the consumer was invoked from. `configure(root)` now takes the root, the
-same way the reporter does.
+A CWD-relative default would resolve against wherever the consumer was
+invoked from, so the root arrives through `configure(root)`, the same
+way the reporter's does.
 """
 from __future__ import annotations
 

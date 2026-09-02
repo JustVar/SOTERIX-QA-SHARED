@@ -25,7 +25,7 @@ def _disabled(monkeypatch):
     yield
 
 
-def _live(monkeypatch, issue_key='NC-123'):
+def _live(monkeypatch, issue_key='AUTO-123'):
     """Arm a real create against a fake jira package."""
     monkeypatch.setenv('BUG_CREATION_ENABLED', 'true')
     issue = MagicMock()
@@ -84,16 +84,16 @@ def test_a_real_create_without_a_story_link_returns_the_key(monkeypatch):
     api, _ = _live(monkeypatch)
     result = JiraClient().create_issue('a summary', 'a description')
     api.create_issue.assert_called_once()
-    assert result['key'] == 'NC-123'
+    assert result['key'] == 'AUTO-123'
     assert result['dry_run'] is False
 
 
 def test_a_real_create_with_a_story_link_returns_the_key(monkeypatch):
     api, issue = _live(monkeypatch)
     result = JiraClient().create_issue('a summary', 'a description',
-                                       story_link='NC-99')
-    assert result['key'] == 'NC-123'
-    api.add_comment.assert_called_once_with(issue, 'Related story: NC-99')
+                                       story_link='AUTO-99')
+    assert result['key'] == 'AUTO-123'
+    api.add_comment.assert_called_once_with(issue, 'Related story: AUTO-99')
 
 
 def test_every_return_path_carries_a_key(monkeypatch):
@@ -101,7 +101,7 @@ def test_every_return_path_carries_a_key(monkeypatch):
     assert 'key' in JiraClient().create_issue('s', 'd')
     _live(monkeypatch)
     assert 'key' in JiraClient().create_issue('s', 'd')
-    assert 'key' in JiraClient().create_issue('s', 'd', story_link='NC-1')
+    assert 'key' in JiraClient().create_issue('s', 'd', story_link='AUTO-1')
 
 
 def test_a_failing_story_link_does_not_lose_the_issue_key(monkeypatch):
@@ -109,8 +109,8 @@ def test_a_failing_story_link_does_not_lose_the_issue_key(monkeypatch):
     the caller file it again."""
     api, _ = _live(monkeypatch)
     api.add_comment.side_effect = RuntimeError('comment rejected')
-    result = JiraClient().create_issue('s', 'd', story_link='NC-99')
-    assert result['key'] == 'NC-123'
+    result = JiraClient().create_issue('s', 'd', story_link='AUTO-99')
+    assert result['key'] == 'AUTO-123'
 
 
 def test_a_failing_attachment_does_not_lose_the_issue_key(monkeypatch, tmp_path):
@@ -118,7 +118,7 @@ def test_a_failing_attachment_does_not_lose_the_issue_key(monkeypatch, tmp_path)
     api.add_attachment.side_effect = RuntimeError('too big')
     f = tmp_path / 'shot.png'
     f.write_bytes(b'x')
-    assert JiraClient().create_issue('s', 'd', attachments=[str(f)])['key'] == 'NC-123'
+    assert JiraClient().create_issue('s', 'd', attachments=[str(f)])['key'] == 'AUTO-123'
 
 
 def test_a_missing_attachment_is_skipped_not_raised(monkeypatch):
@@ -167,7 +167,7 @@ def test_the_dry_run_shows_the_test_label_too():
 def test_a_failing_label_update_does_not_lose_the_issue_key(monkeypatch):
     _, issue = _live(monkeypatch)
     issue.update.side_effect = RuntimeError('field locked')
-    assert JiraClient().create_issue('[TEST] s', 'd')['key'] == 'NC-123'
+    assert JiraClient().create_issue('[TEST] s', 'd')['key'] == 'AUTO-123'
 
 
 # ---------------------------------------------------------------------------

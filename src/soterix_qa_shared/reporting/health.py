@@ -1,6 +1,4 @@
-"""Health summary across runs - moved to the shared package.
-
-Health summary across archived runs -- CLI.
+"""Health summary across archived runs -- CLI.
 
     python run.py health                     # newest 20 runs of each module
     python run.py health 50                  # newest 50

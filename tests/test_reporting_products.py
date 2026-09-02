@@ -4,10 +4,9 @@ The project table, the name lookup, the precedence of `product_for`
 (marker, path rule, mapping default, environment, NexaiQ-Core), and the run
 label for one product or a mix.
 
-One test did not come across from the UI repo: it reads
-`docs/QA_TOUCH_INTEGRATION.md` and asserts the table matches. That doc is
-the source of truth and it lives in the consumer, so the test belongs there,
-pointed at this table through the shim.
+The doc-sync test (this table vs docs/QA_TOUCH_INTEGRATION.md) lives in
+the consumer: the doc is the source of truth there, and it reaches this
+table through the shim.
 """
 from __future__ import annotations
 

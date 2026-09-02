@@ -113,3 +113,14 @@ a file that other people read.
   installed editable. The unit tests here cannot see the shim seam.
 - Anything new that can fail silently has a test that proves it fails.
 - `docs/MERGE_RUNBOOK.md` covers the release steps after the merge.
+
+## Code notes
+
+- **No ticket keys in code.** Jira numbers change and go stale; code
+  outlives them. Comments, docstrings, and messages describe the
+  BEHAVIOR; each consumer repo's register maps behavior to the current
+  ticket. Allowance: a Jira-client TEST needs key-shaped fixture data -
+  use a fabricated prefix (`AUTO-123`), never the real project's.
+- **Comments follow the code's writing principles**: concise, direct,
+  nothing twice. Keep the why and the measured fact with its probe
+  date; drop migration history and anything the code already says.

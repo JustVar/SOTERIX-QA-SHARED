@@ -5,23 +5,8 @@ it is gated twice: `BUG_CREATION_ENABLED` must be true AND the `jira`
 package must be installed. With either missing, `create_issue` returns a
 dry-run dict describing what it would have filed, including the mapped
 custom fields, so the whole path can be exercised with nothing reaching
-Jira.
-
-Two bugs came across from the original and are fixed here. Both had the same
-shape: work that belonged after the create was indented inside
-`if story_link:`, so it only happened when a caller passed a story to link
-to. Neither had been seen, because `BUG_CREATION_ENABLED` is false in every
-checked-in env file, and the dry-run path returns before reaching them.
-
-  1. **The return.** A real create with no story link returned None. The
-     issue existed in Jira, but the review loop then raised on
-     `issue.get('key')`, caught it, printed "Item remains pending. Try
-     again later" and left the item queued. Approving it again would file a
-     duplicate.
-  2. **The test-bug marking.** A summary containing "[TEST]" is supposed to
-     get an `automation-test-DELETE-ME` label and a comment asking an admin
-     to delete it. Without a story link it got neither, so test bugs would
-     accumulate in a real project with nothing marking them as disposable.
+Jira. `create_issue` always returns a dict with a `key`, and post-create
+work (labels, comments) never depends on a story link being passed.
 """
 from __future__ import annotations
 

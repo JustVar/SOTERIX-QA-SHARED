@@ -15,10 +15,9 @@ from __future__ import annotations
 
 # logs/last_run_results.json
 #
-# `armed` was added when the local record stopped waiting for a QA Touch run
-# key. Readers that predate it use .get() and are unaffected; a reader that
-# wants it can now tell "this run never intended to upload" (run_key None,
-# armed False) from "this run meant to and could not".
+# `armed` tells "never intended to upload" (run_key None, armed False)
+# from "meant to and could not". Readers .get() it, so older files
+# still read.
 RUN_RESULTS_FIELDS = ('timestamp', 'run_key', 'project_key', 'env', 'armed',
                       'exit', 'results')
 RUN_RESULT_RECORD_FIELDS = ('nodeid', 'outcome', 'duration', 'case_key')

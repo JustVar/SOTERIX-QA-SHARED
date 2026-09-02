@@ -6,11 +6,8 @@ Activation for the QA Touch upload:
   pytest --qatouch-upload --qatouch-run <RUN_KEY>
   or:  QATOUCH_UPLOAD=1  QATOUCH_RUN_KEY=<key>  pytest ...
 
-The local run record is written on EVERY session, armed or not. It costs
-nothing, and the tools that read it - the flaky history, the run
-cross-check, the archive - used to get nothing at all from an ordinary
-`pytest` run, because before the sink split the plugin only existed when an
-upload was armed.
+The local run record is written on EVERY session, armed or not; the
+flaky history, the run cross-check and the archive all read it.
 
 Structure:
   * this module      - pytest hooks, node-id records, sink fan-out
@@ -467,13 +464,9 @@ class QATouchReporter:
             log.warning(f'QA Touch: could not resolve {item.nodeid}: {e}')
 
     def pytest_runtest_logreport(self, report: Any) -> None:
-        """Record the result. This is the hook the CONTROLLER sees.
-
-        Recording used to happen in makereport, which under xdist runs only
-        on the workers. Each worker then wrote its own subset of the run
-        record over the others, and the controller - which had recorded
-        nothing - wrote an empty one over all of them. logreport fires on
-        the controller with every test, in both parallel and serial runs.
+        """Record the result. This is the hook the CONTROLLER sees:
+        makereport runs only on the workers under xdist, while logreport
+        fires on the controller with every test, parallel or serial.
         """
         if report.when == 'call':
             outcome = report.outcome

@@ -1,8 +1,6 @@
 """Unit tests for soterix_qa_shared.reporting.branding.
 
-The paths used to be relative to the working directory, which happened to
-work because every caller ran from the repo root. After packaging that is
-no longer true, so the root arrives through configure().
+The root arrives through configure(); nothing is CWD-relative.
 """
 from __future__ import annotations
 

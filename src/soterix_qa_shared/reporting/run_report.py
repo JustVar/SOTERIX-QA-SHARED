@@ -1,9 +1,8 @@
-"""Run-report writer - moved to the shared package.
-
-Per-run HTML report -- builder and CLI.
+"""Per-run HTML report -- builder and CLI.
 
 Turns one archived run folder (see run_archive) into run.html: a page that
 puts every piece of the run's evidence one click away, failures first.
+Consumers invoke it through their plugins/run_report.py shim:
 
     python -m plugins.run_report latest
     python -m plugins.run_report reports/runs/<start>__<target>

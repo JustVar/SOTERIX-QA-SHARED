@@ -13,8 +13,8 @@ Standard library only, and nothing here knows about QA Touch or pytest:
   * `health`      the cross-run health.html and its CLI
   * `layout`      one repo root -> every reporting path
 
-Two of the three need something from the consumer before they work, because
-neither a repo root nor a directory layout is the package's to guess:
+Modules that write or brand pages need the consumer's root or rules
+first, because neither is the package's to guess:
 
     from soterix_qa_shared.reporting import branding, products
 
@@ -22,13 +22,6 @@ neither a repo root nor a directory layout is the package's to guess:
     products.configure_path_rules([('tests/ui/c2c/', '60W5')])
 
 `paths` needs nothing. It takes a directory and a stem and returns a name.
-
-The rest of the reporting stack (the archive, the run and health pages, the
-media capture, the mailer) stays in the UI repo until a second consumer
-needs it. It is 4,338 lines and wants its own design pass, not a move.
-Measured 09/01/2026: the API repo's own report helper turned out to overlap
-with none of it, so those helpers became `htmlblocks` and the five big
-modules still have exactly one consumer.
 """
 from .branding import COMPANY, favicon_link, header_logo
 from .paths import PATH_MAX, digest, fit_name, long_root_warning

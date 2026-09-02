@@ -1,6 +1,6 @@
 """Node-id results, the sink interface, and the local run record.
 
-These pin the identity decision behind S5: a test result is keyed by node
+These pin the identity decision: a test result is keyed by node
 id, and folding to QA Touch case keys is one sink's private step.
 """
 from __future__ import annotations

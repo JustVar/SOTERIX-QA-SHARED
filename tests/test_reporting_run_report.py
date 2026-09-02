@@ -1,4 +1,4 @@
-"""Unit tests for plugins/run_report.py.
+"""Unit tests for soterix_qa_shared.reporting.run_report.
 
 Pure-part coverage on temp folders: file-name parsing, test-to-file
 matching (exact, digest-shortened, prefix, slugified), the trace digest
@@ -7,9 +7,6 @@ page's section order and evidence links, the verdict sentence, the
 plain-language delta note, the error signature and failure grouping, the
 history strip facts and flaky rate, tolerance of missing files and keys,
 and the CLI. No browser, no network.
-
-Living under tests/plugins/ to be picked up by the default discovery without
-needing to add a new test root or update pytest collection config.
 """
 from __future__ import annotations
 
@@ -22,8 +19,6 @@ from pathlib import Path
 
 import pytest
 
-# Ensure the repo root is importable so `plugins.run_report` resolves
-# the same way pytest itself loads it during a real run.
 from soterix_qa_shared.reporting import run_report as rr
 
 

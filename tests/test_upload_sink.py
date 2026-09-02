@@ -1,9 +1,5 @@
 """The QA Touch upload sink.
 
-Ported from the UI repo's reporter suite. Every assertion about talking to
-QA Touch moved here unchanged in meaning; only the setup changed, because
-the sink now receives node-id results instead of a pre-folded case map.
-
 Pins for the 2026-08-17 silent-no-op work: the results API accepts a case
 key or a per-run result key, answers {"success": true}, and writes nothing.
 Only the case CODE lands. These tests make sure the sink resolves codes,

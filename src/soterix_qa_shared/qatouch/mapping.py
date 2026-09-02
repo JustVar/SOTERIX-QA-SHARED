@@ -1,11 +1,11 @@
 """Pure helpers for reading a node id -> case key mapping.
 
 Only the parametrization-collapsing helpers live here. The *policy* that
-decides which mapping rows may upload does NOT: the UI repo gates on a
-`reviewed` flag, the API repo does not, and the archive's display-only
-reader is permissive by contract. That policy is injected by each repo's
-shim (see the package README, rule 8), so this module stays free of any
-opinion about which rows count.
+decides which mapping rows may upload does NOT: both consumer repos gate
+on a `reviewed` flag, and the archive's display-only reader is permissive
+by contract. That policy is injected by each repo's shim (see
+docs/RULES.md, rule 8), so this module stays free of any opinion about
+which rows count.
 
 Nothing here touches the filesystem or the network.
 """

@@ -211,9 +211,8 @@ class QATouchClient:
         else, so `code` and `description` are accepted for backward
         compatibility but are not sent. Set them in the QA Touch UI.
 
-        Was previously POST /api/v1/projects with a JSON body. That path does
-        not exist - it returns 404 - so this call never worked. Untested
-        against live QA Touch, because testing it creates a real project.
+        Untested against live QA Touch, because testing it creates a
+        real project.
         """
         url = self._url('/api/v1/project')
         resp = self.session.post(url, params={'name': name}, timeout=self.timeout)
@@ -233,9 +232,6 @@ class QATouchClient:
 
         Takes a project KEY (e.g. 'JlW1'), not a numeric id, and a parent
         module KEY for sub-modules.
-
-        Was previously POST /api/v1/modules with a JSON body and numeric ids.
-        That path does not exist - it returns 404 - so this call never worked.
         """
         params = {'projectKey': project_key, 'moduleName': name}
         if parent_key:

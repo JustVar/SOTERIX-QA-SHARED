@@ -1,6 +1,4 @@
-"""Media capture for a Playwright run - moved to the shared package.
-
-Screenshot reporter -- pytest plugin.
+"""Screenshot reporter -- pytest plugin.
 
 Writes one labeled screenshot per UI test to disk and embeds failures into
 the HTML report (reports/report.html), so a run can be reviewed straight

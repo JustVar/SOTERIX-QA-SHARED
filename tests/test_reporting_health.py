@@ -1,4 +1,4 @@
-"""Unit tests for tools/health_summary.py.
+"""Unit tests for soterix_qa_shared.reporting.health.
 
 Aggregation over fake summaries: the per-module window, runs of one
 test pooled into their module, pass rates over test outcomes, mean

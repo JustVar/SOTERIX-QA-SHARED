@@ -1,6 +1,4 @@
-"""Per-run archive plugin - moved to the shared package.
-
-Per-run archive -- pytest plugin.
+"""Per-run archive -- pytest plugin.
 
 Copies each run's evidence into its own folder before the next run can
 destroy it: reports/report.html is overwritten every run, pytest-playwright

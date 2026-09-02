@@ -1,15 +1,12 @@
-"""Unit tests for plugins/run_archive.py.
+"""Unit tests for soterix_qa_shared.reporting.run_archive.
 
 Pure-helper coverage plus the screenshot copy's gates (run on temp folders):
 slug building, collision suffixing, prune selection, path-cap truncation,
 the summary shape, index rendering, outcome classification, the guard
 decisions, and the run.html hand-off to run_report. The full end-to-end
 archive needs a finished pytest session with real report files, so it is
-exercised by real runs, not here.
-
-Living under tests/plugins/ to be picked up by the default discovery without
-needing to add a new test root or update pytest collection config. The tests
-do not require playwright, a browser, or network.
+exercised by real runs, not here. The tests do not require
+playwright, a browser, or network.
 """
 from __future__ import annotations
 
@@ -21,8 +18,6 @@ from pathlib import Path
 
 import pytest
 
-# Ensure the repo root is importable so `plugins.run_archive` resolves
-# the same way pytest itself loads it during a real run.
 from soterix_qa_shared.reporting import run_archive as ra
 
 
