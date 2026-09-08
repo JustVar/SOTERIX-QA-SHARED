@@ -644,7 +644,7 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     """run.html shows titles, cases, provenance, delta chips, and the slowest list."""
     run = _make_run(tmp_path)
     _add_summary_tests(run, _summary_test_rows(), {
-        'env': 'qa', 'base_url_host': 'app.example.com', 'git_commit': 'abc1234',
+        'env': 'qa', 'box': 'us', 'base_url_host': 'app.example.com', 'git_commit': 'abc1234',
         'playwright': '1.62.0', 'pytest_playwright': '0.9.0',
         'browser': 'chromium', 'browser_channel': 'chrome'})
     # The previous run of this target: NODEID passed, TWIN_A failed, TWIN_B absent.
@@ -678,9 +678,11 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     assert 'chip delta new-test">New test<' in page
     assert '<h4 class="module">ui/c2c/test_cams.py (1)</h4>' in page
     # Header provenance, the verdict, and the plain-language delta note.
-    for fact in ('Env: <code>QA</code>', 'app.example.com', 'abc1234', 'Chromium / Chrome',
-                 'Playwright 1.62.0, Pytest-Playwright 0.9.0'):
+    for fact in ('Env: <code>QA</code>', 'Box: <code>us</code>', 'app.example.com', 'abc1234',
+                 'Chromium / Chrome', 'Playwright 1.62.0, Pytest-Playwright 0.9.0'):
         assert fact in page
+    # The box sits between Env and Host: the two boxes share a host.
+    assert page.index('Env: <code>QA</code>') < page.index('Box: <code>us</code>') < page.index('app.example.com')
     assert '<p class="verdict">1 of 3 tests failed - 1 new failure, 1 fixed; 1 test skipped.</p>' in page
     assert ('Changes since the <a href="../2026-08-23_10-00-00__tests-ui-views/run.html">'
             'previous run of these tests (Aug 23, 10:00 AM)</a>. Each changed test carries a '

@@ -1484,7 +1484,7 @@ def _render_provenance(summary: dict, product: str = '') -> str:
         f'{label} {prov[key]}' for label, key in
         (('Playwright', 'playwright'), ('Pytest-Playwright', 'pytest_playwright')) if prov.get(key))
     env = str(prov.get('env')).upper() if prov.get('env') else None
-    facts = (('Env', env), ('Host', prov.get('base_url_host')),
+    facts = (('Env', env), ('Box', prov.get('box')), ('Host', prov.get('base_url_host')),
              ('Commit', prov.get('git_commit')), ('Browser', browser), ('Versions', versions))
     spans = [f'<span class="product">Product: {escape(product)}</span>'] if product else []
     spans += [f'<span>{label}: <code>{escape(str(value))}</code></span>'

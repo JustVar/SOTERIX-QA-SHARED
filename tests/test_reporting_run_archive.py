@@ -427,6 +427,22 @@ def test_index_renders_summary_values():
         assert cell in html
 
 
+def test_index_names_the_box_beside_the_target_when_recorded():
+    """Two boxes share one host and one target string, so a run that
+    recorded its box shows it beside the target and the filter box finds
+    it; a run without one shows the target alone."""
+    with_box = {'target': ['tests/ui'], 'provenance': {'env': 'qa', 'box': 'us'}}
+    without = {'target': ['tests/ui'], 'provenance': {'env': 'qa', 'box': None}}
+    html = ra._render_index([_entry('2026-09-08_04-00-00__tests-ui', with_box),
+                             _entry('2026-09-07_04-00-00__tests-ui', without)])
+    rows = re.findall(r'<tr data-test="([^"]*)">(.*?)</tr>', html, flags=re.DOTALL)
+    assert len(rows) == 2
+    assert '<td>tests/ui <code class="box">us</code></td>' in rows[0][1]
+    assert ' us ' in f' {rows[0][0]} '
+    assert '<td>tests/ui</td>' in rows[1][1]
+    assert 'class="box"' not in rows[1][1]
+
+
 def test_index_has_a_caption_and_survives_no_runs():
     """An empty archive still renders the caption and a no-runs notice."""
     html = ra._render_index([])
@@ -1021,9 +1037,9 @@ class TestTestLog:
         assert by_id[passed]['title'] == 'A'
         assert by_id[failed]['log_file'] == 'log/t-x.py-test_b-chromium.log'
         assert by_id[failed]['error'] == 'assert 1 == 2'
-        assert set(summary['provenance']) == {'env', 'base_url_host', 'git_commit', 'playwright',
-                                              'pytest_playwright', 'browser', 'browser_channel',
-                                              'product'}
+        assert set(summary['provenance']) == {'env', 'box', 'base_url_host', 'git_commit',
+                                              'playwright', 'pytest_playwright', 'browser',
+                                              'browser_channel', 'product'}
         page = (dest / 'run.html').read_text(encoding='utf-8')
         assert 'href="log/t-x.py-test_b-chromium.log"' in page
         assert 'href="log/t-x.py-test_a-chromium.log"' not in page

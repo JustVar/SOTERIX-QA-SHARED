@@ -747,7 +747,11 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
     """Where and with what the run happened, and which product it tested.
     Every field tolerates absence."""
     out: dict[str, Any] = {
-        'env': (environ.get('ENV') or 'qa').strip().lower(), 'base_url_host': None,
+        'env': (environ.get('ENV') or 'qa').strip().lower(),
+        # The tenant within the env. Two boxes share one host, so the host
+        # alone cannot tell an India run from a US run.
+        'box': (environ.get('BOX') or '').strip().lower() or None,
+        'base_url_host': None,
         'git_commit': None, 'playwright': None, 'pytest_playwright': None,
         'browser': None, 'browser_channel': None, 'product': product or None,
     }
@@ -941,6 +945,10 @@ def _render_index(entries: list[dict], has_health: bool = False,
         stamp, _, slug = name.partition('__')
         started = summary.get('started') or stamp.replace('_', ' ')
         target = ' '.join(summary.get('target') or []) or slug
+        provenance = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
+        # Two boxes share one host and one target string; the box is what
+        # tells their rows apart, so it sits beside the target when recorded.
+        box = str(provenance.get('box') or '')
         product = (summary_product(summary)
                    or target_product(summary.get('target') or [], default_key))
         exitstatus = summary.get('exitstatus')
@@ -957,7 +965,7 @@ def _render_index(entries: list[dict], has_health: bool = False,
             # the readable form; the ISO stamp stays in the tooltip and the search words
             f'<span title="{escape(str(started), quote=True)}">{escape(friendly_stamp(started))}</span>',
             escape(product),
-            escape(str(target)),
+            escape(str(target)) + (f' <code class="box">{escape(box)}</code>' if box else ''),
             *[escape(str(counts.get(key, '-')))
               for key in ('passed', 'failed', 'skipped', 'errors')],
             outcome_html(exitstatus),
@@ -965,7 +973,7 @@ def _render_index(entries: list[dict], has_health: bool = False,
             '<span class="open">' + ''.join(links) + '</span>',
         ]
         words = ' '.join(str(w) for w in (started, friendly_stamp(started), product, target,
-                                           exit_outcome(exitstatus), name))
+                                           box, exit_outcome(exitstatus), name) if w)
         rows.append(f'<tr data-test="{escape(words.lower(), quote=True)}">'
                     + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
 
