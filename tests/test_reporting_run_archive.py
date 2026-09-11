@@ -15,6 +15,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1108,3 +1109,25 @@ def test_index_links_health_only_when_it_exists(tmp_path):
     (tmp_path / 'health.html').write_text('x', encoding='utf-8')
     ra._write_index(tmp_path)
     assert 'href="health.html"' in (tmp_path / 'index.html').read_text(encoding='utf-8')
+
+
+def test_record_phase_keeps_a_skips_reason():
+    """A skipped test's record carries its reason (the box map, the stream
+    guard, require_items all say why); a passed test's reason stays None."""
+    state = ra._RunState()
+    report = _FakePhaseReport('tests/ui/x.py::test_a[chromium]', 'setup', 'skipped')
+    report.longrepr = ('tests/ui/x.py', 12, "Skipped: box us is without 'lpr': Spartan0 has no LPR cameras")
+    ra.record_phase(state, report)
+    rec = state.tests['tests/ui/x.py::test_a[chromium]']
+    assert rec['outcome'] == 'skipped'
+    assert rec['reason'] == "box us is without 'lpr': Spartan0 has no LPR cameras"
+    assert rec['error'] is None
+    passed = _FakePhaseReport('tests/ui/x.py::test_b[chromium]', 'call', 'passed')
+    ra.record_phase(state, passed)
+    assert state.tests['tests/ui/x.py::test_b[chromium]']['reason'] is None
+
+
+def test_skip_reason_reads_the_tuple_or_the_text():
+    assert ra.skip_reason(SimpleNamespace(longrepr=('t.py', 1, 'Skipped: the reason'), longreprtext='x')) == 'the reason'
+    assert ra.skip_reason(SimpleNamespace(longrepr=None, longreprtext='Skipped:  spaced   out  ')) == 'spaced out'
+    assert ra.skip_reason(SimpleNamespace(longrepr=None, longreprtext='')) == ''

@@ -651,7 +651,7 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
             'case_key': case['case_key'], 'case_title': case['case_title'],
             'product': product_name(product_for(nodeid, marker_project, project_key)),
             'outcome': None, 'duration_s': 0.0, 'phases': {}, 'log_file': None,
-            'error': None,
+            'error': None, 'reason': None,
         }
     if report.outcome == 'rerun':
         return
@@ -665,6 +665,11 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
         # The line run_report groups failures by and checks against the
         # previous runs. Kept here so no later reader needs report.html.
         rec['error'] = error_line(getattr(report, 'longreprtext', '') or '')
+    if outcome == 'skipped':
+        # A skip's reason is a measured fact now (the box `without` map, the
+        # stream guard, require_items); until 09/11/2026 the record kept none
+        # of it, and a night's 111 skips could not be read back.
+        rec['reason'] = skip_reason(report)
     state.captured.setdefault(nodeid, []).append({
         'phase': report.when, 'outcome': report.outcome, 'duration': duration,
         'stdout': phase_capture(report, 'stdout'),
@@ -673,6 +678,24 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
         # a skip's reason is the phase's whole story - keep it beside the output
         'skip': (getattr(report, 'longreprtext', '') or '') if report.outcome == 'skipped' else '',
     })
+
+
+def skip_reason(report: Any) -> str:
+    """The reason a phase report skipped, as one line.
+
+    pytest stores a skip as the tuple (path, line, 'Skipped: reason') in
+    longrepr; longreprtext is that tuple's repr, so the message is taken
+    from the tuple when there is one and from the text otherwise.
+    """
+    longrepr = getattr(report, 'longrepr', None)
+    if isinstance(longrepr, (tuple, list)) and len(longrepr) == 3:
+        text = str(longrepr[2])
+    else:
+        text = getattr(report, 'longreprtext', '') or str(longrepr or '')
+    text = ' '.join(text.split())
+    if text.startswith('Skipped: '):
+        text = text[len('Skipped: '):]
+    return text[:400]
 
 
 def format_test_log(rec: Mapping[str, Any], phases: list[dict]) -> str:

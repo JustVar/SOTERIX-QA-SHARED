@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soterix-qa-shared"
-version = "0.28.1"
+version = "0.28.2"
 description = "Shared QA pipeline for the Soterix QA repos: QA Touch client, a pytest result reporter with pluggable sinks, and the reporting leaves both repos share."
 requires-python = ">=3.11"
 # Base install is client-only on purpose: the UI canary job and any future
