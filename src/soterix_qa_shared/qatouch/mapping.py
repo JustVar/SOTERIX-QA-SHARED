@@ -12,6 +12,14 @@ Nothing here touches the filesystem or the network.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+
+# A row's value: one case key, or one per QA Touch project for a test that
+# runs against more than one product (the Core UI tests run against the
+# Neurosen private cloud too, which is its own project). The reporter
+# picks the key for the project the run reports to; a str is that key
+# whatever the project.
+MappingValue = 'str | Mapping[str, str]'
 
 # Greedy and anchored, so a node id whose parameter itself contains a
 # bracket collapses to the bare function rather than to a fragment.
@@ -23,7 +31,18 @@ def function_base(nodeid: str) -> str:
     return _PARAM_RE.sub('', nodeid)
 
 
-def base_keyed(mapping: dict[str, str]) -> dict[str, str]:
+def key_for(value: str | Mapping[str, str] | None, project: str | None) -> str | None:
+    """The case key a mapping value gives for a project: a str is the key
+    for every project; a per-project map answers for its projects only."""
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        key = value.get(str(project or ''))
+        return str(key) if key else None
+    return str(value) or None
+
+
+def base_keyed(mapping: dict[str, str | Mapping[str, str]]) -> dict[str, str | Mapping[str, str]]:
     """function_base(nodeid) -> case_key, for rows that agree.
 
     Mapping keys carry the parametrization they were generated under: in the
@@ -39,7 +58,7 @@ def base_keyed(mapping: dict[str, str]) -> dict[str, str]:
     guessing would write a status onto the wrong case - worse than writing
     none at all.
     """
-    collapsed: dict[str, str] = {}
+    collapsed: dict[str, str | Mapping[str, str]] = {}
     conflicting: set[str] = set()
     for nodeid, case_key in mapping.items():
         base = function_base(nodeid)

@@ -603,3 +603,41 @@ def test_the_summary_separates_the_test_count_from_the_case_count(monkeypatch, t
     r.pytest_terminal_summary(tr, exitstatus=0)
     written = ' '.join(str(c.args[0]) for c in tr.write_line.call_args_list)
     assert 'Mapped:     3 tests -> 2 cases' in written
+
+
+def test_a_per_project_row_gives_the_key_for_the_project_reported_to(monkeypatch, tmp_path):
+    """A row may carry one key per project: the Core UI tests run against the
+    Neurosen private cloud too, which is its own QA Touch project. The key
+    returned is the one for the project the test reports to, and None when
+    the row has no key for it - never another project's key."""
+    from soterix_qa_shared.reporting import products
+    _mapping(monkeypatch, tmp_path, {'t.py::test_a[chromium]': {'JlW1': 'CORE1', 'P0BK': 'NEURO1'}})
+    r = _reporter()
+    monkeypatch.setattr(products, 'PATH_RULES', [])
+    assert r._resolve_case_key(_item(), 't.py::test_a[chromium]') == 'CORE1'          # default project
+    assert r._resolve_case_key(_item(project_key='P0BK'), 't.py::test_a[chromium]') == 'NEURO1'
+    assert r._resolve_case_key(_item(project_key='60W5'), 't.py::test_a[chromium]') is None
+    # No item in reach (the controller's logreport): the path rule and default decide.
+    assert r._resolve_case_key(None, 't.py::test_a[webkit]') == 'CORE1'
+    monkeypatch.setattr(products, 'PATH_RULES', [('t.py/', 'P0BK')])
+    assert r._resolve_case_key(None, 't.py::test_a[webkit]') == 'NEURO1'
+
+
+def test_a_plain_key_answers_for_every_project(monkeypatch, tmp_path):
+    """The one-key rows the mapping file is full of keep working unchanged."""
+    _mapping(monkeypatch, tmp_path, {'t.py::test_a[chromium]': 'K1'})
+    r = _reporter()
+    assert r._resolve_case_key(_item(project_key='P0BK'), 't.py::test_a[chromium]') == 'K1'
+    assert r._resolve_case_key(None, 't.py::test_a[chromium]') == 'K1'
+
+
+def test_key_for_and_base_keyed_handle_per_project_values():
+    from soterix_qa_shared.qatouch.mapping import base_keyed, key_for
+    assert key_for('K1', 'JlW1') == 'K1'
+    assert key_for({'JlW1': 'K1'}, 'JlW1') == 'K1'
+    assert key_for({'JlW1': 'K1'}, 'P0BK') is None
+    assert key_for({'JlW1': ''}, 'JlW1') is None
+    assert key_for(None, 'JlW1') is None
+    collapsed = base_keyed({'t.py::test_a[chromium]': {'JlW1': 'K1'}, 't.py::test_a[webkit]': {'JlW1': 'K1'},
+                            't.py::test_b[chromium]': {'JlW1': 'K2'}, 't.py::test_b[webkit]': {'JlW1': 'K3'}})
+    assert collapsed == {'t.py::test_a': {'JlW1': 'K1'}}

@@ -43,7 +43,7 @@ from typing import Any
 import pytest
 
 from soterix_qa_shared.qatouch.layout import paths_for
-from soterix_qa_shared.qatouch.mapping import base_keyed
+from soterix_qa_shared.qatouch.mapping import base_keyed, key_for
 from soterix_qa_shared.qatouch.results import (
     ResultSink,
     RunContext,
@@ -300,6 +300,13 @@ def pytest_configure(config: Any) -> None:
     config.pluginmanager.register(reporter, 'qatouch_reporter')
 
 
+def product_for_nodeid(nodeid: str, default_key: str | None) -> str:
+    """The project a node id reports to when no item is in reach (the
+    controller's logreport under xdist): the path rule, else the default."""
+    from soterix_qa_shared.reporting.products import product_for
+    return product_for(nodeid, None, default_key)
+
+
 class QATouchReporter:
     """Collects one result per node id and fans them out to the sinks."""
 
@@ -384,11 +391,24 @@ class QATouchReporter:
             return {}
 
     def _resolve_case_key(self, item: Any, nodeid: str) -> str | None:
-        """Marker first, then the mapping - exact node id, then the bare function."""
+        """Marker first, then the mapping - exact node id, then the bare function.
+
+        A mapping value is one key, or one key per project (qatouch.mapping
+        .key_for): the key returned is the one for the project this test
+        reports to, so a Core test run against Neurosen writes to the
+        Neurosen case, and to nothing when the row has no key for it.
+        """
         if item is not None:
             marker = item.get_closest_marker('qatouch')
             if marker and marker.args:
                 return marker.args[0]
+        value = self._mapping_value(nodeid)
+        if value is None:
+            return None
+        return key_for(value, self._resolve_project_key(item) if item is not None
+                       else product_for_nodeid(nodeid, self.default_project_key))
+
+    def _mapping_value(self, nodeid: str):
         if nodeid in self.mapping:
             return self.mapping[nodeid]
         base = nodeid.split('[')[0]
