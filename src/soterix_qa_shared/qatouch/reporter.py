@@ -399,12 +399,23 @@ class QATouchReporter:
         return self.mapping_by_base.get(base)
 
     def _resolve_project_key(self, item: Any) -> str:
-        """Order: per-test marker > env QATOUCH_PROJECT_ID > the default."""
+        """Order: per-test marker > the consumer's path rule > env
+        QATOUCH_PROJECT_ID > the default.
+
+        The same precedence the archive uses to name a run's product
+        (reporting/products.product_for), so a c2c test archived as Camera
+        2 Cloud also uploads to Camera 2 Cloud. Until 09/11/2026 the
+        upload skipped the path rule and a c2c run would have gone to the
+        Core project.
+        """
+        from soterix_qa_shared.reporting.products import product_for
+        marker_value = None
         if item is not None:
             marker = item.get_closest_marker('qatouch_project')
             if marker and marker.args:
-                return marker.args[0]
-        return self.default_project_key
+                marker_value = str(marker.args[0])
+        nodeid = getattr(item, 'nodeid', '') if item is not None else ''
+        return product_for(nodeid, marker_value, self.default_project_key)
 
     # -- screenshots --------------------------------------------------------
 

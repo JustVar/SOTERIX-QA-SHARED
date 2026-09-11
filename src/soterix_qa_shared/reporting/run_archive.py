@@ -77,6 +77,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 from collections.abc import Mapping
@@ -88,6 +89,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from soterix_qa_shared.reporting import live as live_record
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
 from soterix_qa_shared.reporting.paths import PATH_MAX, fit_name
 from soterix_qa_shared.reporting.products import (
@@ -290,6 +292,15 @@ class _RunState:
         self.mapping_project: str | None = None
         self.mapping_project_read = False
         self.run_log = _RunLog()
+        # The live record of a run in progress (reporting/live.py): what
+        # was collected, what is running now, where the record is written,
+        # and when it was last written (writes are throttled).
+        self.collected: list[str] = []
+        self.current: str | None = None
+        self.workers: int = 1
+        self.live_paths: list[Path] = []
+        self.live_written: float = 0.0
+        self.config: Any = None   # pytest's config, kept for the live writes logreport makes
 
     @property
     def tests_run(self) -> int:
@@ -1010,6 +1021,7 @@ input#filter {{ width: min(100%, 36rem); padding: 0.45rem 0.7rem; font: inherit;
 </head>
 <body>
 <div class="brand-row">{header_logo()}<h1>Test Run Archive</h1></div>
+{live_record.banner_html()}
 <p>One folder per test run, newest first. Open a run's <b>{INDEX_LINK_RUN_REPORT}</b>
 for its failures with their screenshots, video, and trace. <b>{INDEX_LINK_RAW_REPORT}</b>
 is the report file pytest wrote. The archive keeps the newest {KEEP_RUNS} runs of each
@@ -1155,6 +1167,63 @@ def pytest_runtest_logreport(report: Any) -> None:
                      project_key=_state.project_key())
     except Exception as e:  # noqa: BLE001 - per-test facts are reporting, never a verdict
         log.debug(f'run_archive: could not record {report.nodeid}: {e}')
+    if _state.live_paths and _state.config is not None:
+        _write_live(_state.config, _state)
+
+
+def _live_enabled(config: Any) -> bool:
+    """The live record follows the archive: same kill switch, same process."""
+    return not _archive_disabled(os.environ) and _process_may_archive(config, os.environ)
+
+
+def _live_record(config: Any, state: _RunState, now: float) -> dict:
+    """The record for this moment, from the session's facts (reporting/live.py)."""
+    target = list(config.args)
+    default_key = state.project_key()
+    product = product_name(target_product(target, default_key)) if target else product_name(product_for('', None, default_key))
+    remaining = [n for n in state.collected if n not in state.tests]
+    return live_record.build_record(
+        started=state.started or now, now=now, target=target,
+        box=(os.environ.get('BOX') or '').strip().lower() or None,
+        env=(os.environ.get('ENV') or 'qa').strip().lower(), product=product,
+        workers=state.workers, collected=len(state.collected), counts=state.counts,
+        current=state.current, remaining=remaining, runs_dir=RUNS_DIR,
+        hostname=socket.gethostname())
+
+
+def _write_live(config: Any, state: _RunState, force: bool = False) -> None:
+    """Refresh live.json, at most every MIN_WRITE_GAP_S unless forced."""
+    now = time.time()
+    if not state.live_paths or (not force and now - state.live_written < live_record.MIN_WRITE_GAP_S):
+        return
+    try:
+        live_record.write_live(state.live_paths, _live_record(config, state, now))
+        state.live_written = now
+    except Exception as e:  # noqa: BLE001 - the live record is a courtesy, never a verdict
+        log.debug(f'run_archive: could not write the live record: {e}')
+
+
+def pytest_collection_finish(session: Any) -> None:
+    """Know the whole run before it starts: the collected node ids, the
+    worker count, and where the live record goes. Writes the first record,
+    so the archive pages show the run from its first second."""
+    if not _live_enabled(session.config):
+        return
+    _state.collected = [item.nodeid for item in session.items]
+    try:
+        workers = session.config.getoption('numprocesses', None)
+        _state.workers = int(workers) if workers and str(workers).isdigit() else 1
+    except Exception:  # noqa: BLE001 - why: no xdist means one worker, and the option is not there to read
+        _state.workers = 1
+    _state.config = session.config
+    _state.live_paths = live_record.live_paths(RUNS_DIR, os.environ)
+    _write_live(session.config, _state, force=True)
+
+
+def pytest_runtest_logstart(nodeid: str, location: Any) -> None:
+    """The test running now, for the banner. Fires on the controller under
+    xdist as well, forwarded from the worker that started it."""
+    _state.current = nodeid
 
 
 def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
@@ -1196,6 +1265,10 @@ def pytest_unconfigure(config: Any) -> None:
     """
     # Closed first so the archive copies a complete, flushed run.log.
     _state.run_log.detach()
+    # The session is over whatever happens next: the live record comes
+    # down here, before any early return, so the banner never outlives
+    # the run it announced.
+    live_record.clear_live(_state.live_paths)
     if _archive_disabled(os.environ):
         return
     if not _should_archive(config, os.environ, _state.tests_run):

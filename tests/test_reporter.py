@@ -459,6 +459,25 @@ def test_project_resolution_order(monkeypatch, tmp_path):
     assert _reporter()._resolve_project_key(None) == 'ENV_PROJ'
 
 
+def test_project_resolution_honours_the_consumers_path_rule(monkeypatch):
+    """A consumer's path rule (products.configure_path_rules) places a test's
+    upload the way it places the archive's product: marker first, then the
+    path rule, then QATOUCH_PROJECT_ID. A c2c test uploads to Camera 2 Cloud
+    even when the run's env names the Core project."""
+    from soterix_qa_shared.reporting import products
+    monkeypatch.setattr(products, 'PATH_RULES', (('tests/ui/c2c/', '60W5'),))
+    monkeypatch.setenv('QATOUCH_PROJECT_ID', 'JlW1')
+    c2c = _item()
+    c2c.nodeid = 'tests/ui/c2c/test_c2c_auth.py::TestC2CAuth::test_login[bc-5v-1]'
+    core = _item()
+    core.nodeid = 'tests/ui/views/test_views_basic.py::TestViews::test_open'
+    marked = _item(project_key='P0BK')
+    marked.nodeid = c2c.nodeid
+    assert _reporter()._resolve_project_key(c2c) == '60W5'
+    assert _reporter()._resolve_project_key(core) == 'JlW1'
+    assert _reporter()._resolve_project_key(marked) == 'P0BK'
+
+
 # ---------------------------------------------------------------------------
 # Recording
 # ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
+from soterix_qa_shared.reporting import live as live_record
 from soterix_qa_shared.reporting import run_archive
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
 from soterix_qa_shared.reporting.products import is_mixed, target_product
@@ -625,6 +626,7 @@ details.runs ul {{ margin: .25rem 0 0; padding-left: 1.1rem; }}
 </head>
 <body>
 <div class="brand-row">{header_logo()}<h1>Test Health</h1></div>
+{live_record.banner_html()}
 {intro}
 <div class="meta"><a href="index.html">Archive Index</a></div>
 
