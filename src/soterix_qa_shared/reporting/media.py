@@ -47,6 +47,12 @@ nothing to set up.
 
 Screenshots are reporting, not testing: every error in this plugin is logged
 and swallowed, so a capture problem can never change a test's outcome.
+
+A screenshot call that never returns (a dead Playwright driver whose
+pipes Chrome kept open) is capped by a watchdog: REPORT_MEDIA_CAP_S,
+45 s by default, 0 disables. Past it an xdist worker exits so the
+controller reschedules the rest; a plain session is only told. A driver
+already known dead is not asked at all. See the note above _Watchdog.
 """
 from __future__ import annotations
 
@@ -54,6 +60,8 @@ import base64
 import logging
 import os
 import re
+import sys
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -195,6 +203,91 @@ def _drain_drag_captures(page: Any, cap: int = DRAG_CAPTURE_MAX) -> list:
     except Exception as e:  # noqa: BLE001 - an unclearable stash must not cost the frames
         log.debug(f'report_media: could not clear the drag stash: {e}')
     return taken
+
+
+# ---------------------------------------------------------------- the watchdog
+#
+# 09/11/2026, spartan1: two xdist workers spun at 100% CPU for two hours
+# inside page.screenshot() in this plugin's makereport hook. Their
+# Playwright driver (node) had died, but the Chrome children still held its
+# pipes open, so Python never saw EOF and the sync API's wait loop never
+# returned. pytest-timeout could not help: its signal lands inside the
+# asyncio loop step, which logs the exception and carries on. The whole
+# nightly then waits for the run cap. Two defences, both cheap:
+#   1. do not ask a dead driver for a screenshot (_driver_alive);
+#   2. a wall-clock watchdog on the call; when it expires in an xdist
+#      worker, the worker exits and the controller marks the test failed
+#      and reschedules the rest. In a plain session it only says so: the
+#      human at the keyboard decides, and an exit would lose the archive.
+HANG_CAP_ENV = 'REPORT_MEDIA_CAP_S'
+DEFAULT_HANG_CAP_S = 45.0
+_exit = os._exit   # a module-level name so the pins can replace it
+
+
+def _hang_cap(environ: Mapping[str, str]) -> float:
+    """Seconds a screenshot may take before the watchdog acts; 0 disables."""
+    try:
+        return max(float(environ.get(HANG_CAP_ENV) or DEFAULT_HANG_CAP_S), 0.0)
+    except ValueError:
+        return DEFAULT_HANG_CAP_S
+
+
+def _driver_alive(page: Any) -> bool | None:
+    """Is the Playwright driver process behind `page` still running?
+
+    True/False when it can be told, None when it cannot (another
+    transport, no /proc on this platform, a private attribute renamed).
+    Reads Playwright internals on purpose: the public API has no such
+    question, and asking a dead driver is what hung the nightly.
+    """
+    try:
+        proc = page._impl_obj._connection._transport._proc
+        pid = int(proc.pid)
+    except Exception:  # noqa: BLE001 - why: unknown is an answer; the watchdog still guards the call
+        return None
+    if getattr(proc, 'returncode', None) is not None:
+        return False
+    try:
+        with open(f'/proc/{pid}/status', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('State:'):
+                    # a driver whose Chrome children kept its pipes open is a zombie here
+                    return 'Z' not in line.split()[1]
+    except OSError:
+        return None
+    return None
+
+
+class _Watchdog:
+    """A wall-clock cap on one screenshot call (see the note above)."""
+
+    def __init__(self, nodeid: str, cap_s: float, environ: Mapping[str, str]) -> None:
+        self.nodeid, self.cap_s = nodeid, cap_s
+        self.in_worker = bool(environ.get('PYTEST_XDIST_WORKER'))
+        self._timer: threading.Timer | None = None
+        self.expired = False
+
+    def __enter__(self) -> _Watchdog:
+        if self.cap_s > 0:
+            self._timer = threading.Timer(self.cap_s, self._expire)
+            self._timer.daemon = True
+            self._timer.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def _expire(self) -> None:
+        self.expired = True
+        msg = (f'report_media: the screenshot for {self.nodeid} did not return in {self.cap_s:g} s; '
+               f'the Playwright driver is gone or stuck'
+               + (' - ending this worker so the run goes on' if self.in_worker else
+                  ' - a plain session is left to the person running it'))
+        log.error(msg)
+        print(msg, file=sys.stderr, flush=True)
+        if self.in_worker:
+            _exit(3)
 
 
 def _settle_loaders(page: Any, timeout_ms: int = SETTLE_MS) -> bool:
@@ -350,16 +443,20 @@ def _attach_media(item: Any, report: Any) -> None:
             # A green Views test is still loading its stream when the
             # verdict lands; give the spinner a bounded moment to leave so
             # the shot shows the painted tile. Failures keep theirs.
-            if suffix == 'PASSED':
-                _settle_loaders(page)
-            # Viewport-only (not full_page) keeps payload size reasonable -
-            # the self-contained report inlines every image.
-            png = page.screenshot()
-            (SCREENSHOT_DIR / _final_filename(item.nodeid, suffix)).write_bytes(png)
-            if embed:
-                report.extras = [*getattr(report, 'extras', []),
-                                 extras.png(base64.b64encode(png).decode('ascii'),
-                                            name=f'{item.name} - {label}')]
+            if _driver_alive(page) is False:
+                log.warning(f'report_media: no screenshot for {item.nodeid}: the Playwright driver is gone')
+            else:
+                with _Watchdog(item.nodeid, _hang_cap(os.environ), os.environ):
+                    if suffix == 'PASSED':
+                        _settle_loaders(page)
+                    # Viewport-only (not full_page) keeps payload size reasonable -
+                    # the self-contained report inlines every image.
+                    png = page.screenshot()
+                (SCREENSHOT_DIR / _final_filename(item.nodeid, suffix)).write_bytes(png)
+                if embed:
+                    report.extras = [*getattr(report, 'extras', []),
+                                     extras.png(base64.b64encode(png).decode('ascii'),
+                                                name=f'{item.name} - {label}')]
     except Exception as e:  # noqa: BLE001 - a lost screenshot must not cost the trace link too
         log.debug(f'report_media: screenshot failed for {item.nodeid}: {e}')
 
