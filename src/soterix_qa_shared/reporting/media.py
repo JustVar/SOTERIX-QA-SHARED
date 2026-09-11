@@ -64,7 +64,7 @@ import sys
 import threading
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
@@ -267,7 +267,7 @@ class _Watchdog:
         self._timer: threading.Timer | None = None
         self.expired = False
 
-    def __enter__(self) -> _Watchdog:
+    def __enter__(self) -> Self:
         if self.cap_s > 0:
             self._timer = threading.Timer(self.cap_s, self._expire)
             self._timer.daemon = True
