@@ -120,3 +120,45 @@ def test_both_pages_carry_the_banner_slot():
     for html in (index, page):
         assert live.banner_html() in html
         assert html.index('<h1>') < html.index('id="live"')
+
+
+def test_sessionstart_opens_the_record_before_collection(state, monkeypatch):
+    """The record exists from the first second, saying 'collecting' until the ids are known.
+    This is the path the xdist controller takes: it never collects, so collection_finish
+    never fires there (09/11/2026: every -n run, the nightly included, had no record at all)."""
+    monkeypatch.setattr(ra, '_archive_disabled', lambda environ: False)
+    monkeypatch.setattr(ra, '_process_may_archive', lambda config, environ: True)
+    monkeypatch.setattr(ra, 'configure', lambda root: None)
+    try:
+        ra.pytest_sessionstart(SimpleNamespace(config=FakeConfig(['tests/ui'], {'numprocesses': 4})))
+    finally:
+        ra._state.run_log.detach()
+    record = read(ra.RUNS_DIR / 'live.json')
+    assert (record['collected'], record['done'], record['workers']) == (0, 0, 4)
+    assert record['eta_s'] is None
+    assert 'collecting' in record['eta_basis']
+
+
+def test_xdist_controller_learns_the_ids_from_the_first_worker(state):
+    """The first worker's collection names the run's tests; the other workers repeat the same ids."""
+    ra._start_live(FakeConfig(['tests/ui'], {'numprocesses': 2}))
+    assert read(ra.RUNS_DIR / 'live.json')['collected'] == 0
+    ra.pytest_xdist_node_collection_finished(None, ['t/a.py::test_a', 't/b.py::test_b'])
+    ra.pytest_xdist_node_collection_finished(None, ['t/a.py::test_a', 't/b.py::test_b'])
+    record = read(ra.RUNS_DIR / 'live.json')
+    assert record['collected'] == 2
+    assert record['eta_basis'].startswith('no earlier run')
+    ra.pytest_runtest_logstart('t/a.py::test_a', None)
+    state.live_written = 0.0
+    ra.pytest_runtest_logreport(fake_report('t/a.py::test_a'))
+    assert read(ra.RUNS_DIR / 'live.json')['done'] == 1
+
+
+def test_worker_ids_without_a_started_record_write_nothing(state):
+    """A worker process (or a disabled record) has no live paths, so the ids hook stays quiet."""
+    ra.pytest_xdist_node_collection_finished(None, ['t/a.py::test_a'])
+    assert not (ra.RUNS_DIR / 'live.json').exists()
+
+
+def test_banner_names_the_collecting_state():
+    assert "'collecting the tests'" in live.banner_html()

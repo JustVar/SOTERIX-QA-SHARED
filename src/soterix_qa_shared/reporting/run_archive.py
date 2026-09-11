@@ -1116,6 +1116,7 @@ def pytest_sessionstart(session: Any) -> None:
         _state.run_log.attach(RUN_LOG)
     except Exception as e:  # noqa: BLE001 - a lost run.log must never block the session
         log.warning(f'run_archive: could not start {RUN_LOG}: {e}')
+    _start_live(session.config)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -1203,21 +1204,46 @@ def _write_live(config: Any, state: _RunState, force: bool = False) -> None:
         log.debug(f'run_archive: could not write the live record: {e}')
 
 
+def _start_live(config: Any, collected: list[str] | None = None) -> None:
+    """Open the live record for this session (idempotent) and write it.
+
+    Called at session start, so the archive pages show the run from its
+    first second, and again when the collected ids are known. Under xdist
+    the controller never collects (xdist's DSession returns True from
+    pytest_collection, which is where pytest would call collection_finish),
+    so the ids arrive from the first worker's collection instead; a session
+    that started the record but never learned the ids stays at
+    "collecting", never blank.
+    """
+    if not _state.live_paths:
+        try:
+            workers = config.getoption('numprocesses', None)
+            _state.workers = int(workers) if workers and str(workers).isdigit() else 1
+        except Exception:  # noqa: BLE001 - why: no xdist means one worker, and the option is not there to read
+            _state.workers = 1
+        _state.config = config
+        _state.live_paths = live_record.live_paths(RUNS_DIR, os.environ)
+    if collected is not None and not _state.collected:
+        _state.collected = list(collected)
+    _write_live(config, _state, force=True)
+
+
 def pytest_collection_finish(session: Any) -> None:
-    """Know the whole run before it starts: the collected node ids, the
-    worker count, and where the live record goes. Writes the first record,
-    so the archive pages show the run from its first second."""
+    """In-process runs: the collected node ids come from the session itself."""
     if not _live_enabled(session.config):
         return
-    _state.collected = [item.nodeid for item in session.items]
-    try:
-        workers = session.config.getoption('numprocesses', None)
-        _state.workers = int(workers) if workers and str(workers).isdigit() else 1
-    except Exception:  # noqa: BLE001 - why: no xdist means one worker, and the option is not there to read
-        _state.workers = 1
-    _state.config = session.config
-    _state.live_paths = live_record.live_paths(RUNS_DIR, os.environ)
-    _write_live(session.config, _state, force=True)
+    _start_live(session.config, [item.nodeid for item in session.items])
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_node_collection_finished(node: Any, ids: Any) -> None:
+    """xdist controller: the first worker to finish collecting names the
+    run's tests. Every worker collects the same ids, so the rest are
+    ignored. optionalhook: the API repo has no xdist, and pytest refuses a
+    plugin that implements a hook nobody declared."""
+    if not _state.live_paths or _state.collected:
+        return
+    _start_live(_state.config, [str(i) for i in ids])
 
 
 def pytest_runtest_logstart(nodeid: str, location: Any) -> None:

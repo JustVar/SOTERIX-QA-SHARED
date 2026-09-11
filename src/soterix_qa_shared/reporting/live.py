@@ -146,7 +146,10 @@ def build_record(*, started: float, now: float, target: list[str], box: str | No
     summaries = history(runs_dir, target, box)
     durations = median_durations(summaries)
     elapsed = max(now - started, 0.0)
-    eta_s, basis = estimate_remaining_s(remaining, durations, workers, summaries, elapsed)
+    if int(collected) > 0:
+        eta_s, basis = estimate_remaining_s(remaining, durations, workers, summaries, elapsed)
+    else:
+        eta_s, basis = None, 'still collecting the tests'
     done = sum(int(v) for v in counts.values())
     return {
         'state': 'running',
@@ -196,7 +199,7 @@ def banner_html() -> str:
     el.className='live'+(stale?' stalled':'');
     el.innerHTML='<b>'+head+'</b>: '+(r.target||[]).join(' ')+(r.box?' on box '+r.box:'')+(r.product?', '+r.product:'')+
       ', started '+r.started.replace('T',' ')+(r.host?' on '+r.host:'')+', '+r.workers+' worker'+(r.workers==1?'':'s')+'.<br>'+
-      r.done+' of '+r.collected+' done ('+(c.passed||0)+' passed, '+(c.failed||0)+' failed, '+(c.skipped||0)+' skipped'+((c.errors||0)?', '+c.errors+' errors':'')+'), '+
+      (r.collected?r.done+' of '+r.collected+' done ('+(c.passed||0)+' passed, '+(c.failed||0)+' failed, '+(c.skipped||0)+' skipped'+((c.errors||0)?', '+c.errors+' errors':'')+')':'collecting the tests')+', '+
       'elapsed '+mins(r.elapsed_s)+', '+eta+'.'+(r.current?'<br>Now: <code>'+r.current+'</code>':'')+
       '<div class="bar"><i style="width:'+pct+'%"></i></div>';
     el.hidden=false;
