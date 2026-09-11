@@ -693,8 +693,7 @@ def skip_reason(report: Any) -> str:
     else:
         text = getattr(report, 'longreprtext', '') or str(longrepr or '')
     text = ' '.join(text.split())
-    if text.startswith('Skipped: '):
-        text = text[len('Skipped: '):]
+    text = text.removeprefix('Skipped: ')
     return text[:400]
 
 
