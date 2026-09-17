@@ -1040,7 +1040,8 @@ class TestTestLog:
         assert by_id[failed]['error'] == 'assert 1 == 2'
         assert set(summary['provenance']) == {'env', 'box', 'base_url_host', 'git_commit',
                                               'playwright', 'pytest_playwright', 'browser',
-                                              'browser_channel', 'product'}
+                                              'browser_channel', 'product', 'host', 'operator',
+                                              'account', 'browser_version', 'browser_latest'}
         page = (dest / 'run.html').read_text(encoding='utf-8')
         assert 'href="log/t-x.py-test_b-chromium.log"' in page
         assert 'href="log/t-x.py-test_a-chromium.log"' not in page
@@ -1131,3 +1132,88 @@ def test_skip_reason_reads_the_tuple_or_the_text():
     assert ra.skip_reason(SimpleNamespace(longrepr=('t.py', 1, 'Skipped: the reason'), longreprtext='x')) == 'the reason'
     assert ra.skip_reason(SimpleNamespace(longrepr=None, longreprtext='Skipped:  spaced   out  ')) == 'spaced out'
     assert ra.skip_reason(SimpleNamespace(longrepr=None, longreprtext='')) == ''
+
+
+# ---------------------------------------------------------------- who ran it, on which Chrome
+
+def _bare_config():
+    return SimpleNamespace(getoption=lambda name, default=None: default)
+
+
+def test_provenance_names_the_machine_the_operator_and_the_browser(monkeypatch, tmp_path):
+    """The nightly's box and a laptop run land in one archive: the record
+    says which machine ran it, as whom, on which Chrome, and whether
+    Google's stable is newer. The version is written once, by the first
+    page fixture to know it; a later writer does not overwrite it."""
+    monkeypatch.setattr(ra, 'BROWSER_VERSION_FILE', tmp_path / '.browser_version')
+    ra.record_browser_version('153.0.8010.36', 'chrome')
+    ra.record_browser_version('999.0', 'chrome')
+    monkeypatch.setattr(ra.socket, 'gethostname', lambda: 'spartan1')
+    monkeypatch.setattr(ra.getpass, 'getuser', lambda: 'soterix')
+    monkeypatch.setattr(ra, 'latest_stable_browser', lambda timeout_s=4.0: '153.0.8010.47')
+    prov = ra._provenance(_bare_config(), {'BOX': 'india'})
+    assert (prov['host'], prov['operator'], prov['box']) == ('spartan1', 'soterix', 'india')
+    assert (prov['browser_version'], prov['browser_latest']) == ('153.0.8010.36', '153.0.8010.47')
+    assert prov['account'] is None  # no env module in this package: a label, not an error
+
+
+def test_provenance_asks_for_the_latest_only_when_a_browser_was_recorded(monkeypatch, tmp_path):
+    """A session that opened no browser never waits on the network."""
+    monkeypatch.setattr(ra, 'BROWSER_VERSION_FILE', tmp_path / 'missing')
+    monkeypatch.setattr(ra, 'latest_stable_browser', lambda timeout_s=4.0: pytest.fail('asked'))
+    prov = ra._provenance(_bare_config(), {})
+    assert (prov['browser_version'], prov['browser_latest']) == (None, None)
+    ra.record_browser_version(None)
+    assert not (tmp_path / 'missing').exists()
+
+
+def test_latest_stable_browser_reads_the_first_version_and_tolerates_the_rest(monkeypatch):
+    """Google's answer lists the newest first; no network, no answer, no crash."""
+    import io
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(ra.urllib.request, 'urlopen',
+                        lambda url, timeout: Resp(b'{"versions": [{"version": "153.0.8010.47"}, {"version": "153.0.8010.36"}]}'))
+    assert ra.latest_stable_browser() == '153.0.8010.47'
+    monkeypatch.setattr(ra.urllib.request, 'urlopen', lambda url, timeout: Resp(b'{"versions": []}'))
+    assert ra.latest_stable_browser() is None
+
+    def down(url, timeout):
+        raise OSError('no route')
+
+    monkeypatch.setattr(ra.urllib.request, 'urlopen', down)
+    assert ra.latest_stable_browser() is None
+
+
+def test_index_shows_the_machine_beside_the_target_and_a_runners_line():
+    """A row carries its machine after its box; the page opens with each
+    machine's Chrome from its newest run, and says when stable is newer."""
+    box_run = {'target': ['tests/ui'], 'provenance': {
+        'box': 'india', 'host': 'spartan1', 'account': 'justin', 'operator': 'soterix',
+        'browser': 'chromium', 'browser_channel': 'chrome',
+        'browser_version': '153.0.8010.36', 'browser_latest': '153.0.8010.47'}}
+    older_box_run = {'target': ['tests/ui'], 'provenance': {
+        'box': 'us', 'host': 'spartan1', 'browser_version': '152.0.1', 'browser_latest': '152.0.1'}}
+    laptop_run = {'target': ['tests/ui/views'], 'provenance': {
+        'box': 'us', 'host': 'JV-LAPTOP', 'operator': 'JustinVarughese',
+        'browser_channel': 'chrome', 'browser_version': '152.0.7977.83', 'browser_latest': '152.0.7977.83'}}
+    html = ra._render_index([_entry('2026-09-17_19-10-45__tests-ui', box_run),
+                             _entry('2026-09-16_04-00-00__tests-ui', older_box_run),
+                             _entry('2026-09-17_12-00-00__tests-ui-views', laptop_run),
+                             _entry('2026-09-15_04-00-00__tests-ui', {'target': ['tests/ui']})])
+    assert '<code class="box">india</code> <code class="host" title="ran on spartan1">spartan1</code>' in html
+    assert '<code class="host" title="ran on JV-LAPTOP">JV-LAPTOP</code>' in html
+    runners = html.split('<p class="runners">')[1].split('</p>')[0]
+    assert runners.startswith('Runners, by their newest run: ')
+    assert ('<code class="host">JV-LAPTOP</code> Chrome 152.0.7977.83 (current stable); '
+            '<code class="host">spartan1</code> Chrome 153.0.8010.36 '
+            '<span class="behind">(stable 153.0.8010.47 is out: update it)</span>.') in runners
+    assert 'justin' in html and 'justinvarughese' in html  # the filter words carry account and operator
+    assert '<p class="runners">' not in ra._render_index([_entry('2026-09-15_04-00-00__tests-ui', {'target': ['tests/ui']})])
+

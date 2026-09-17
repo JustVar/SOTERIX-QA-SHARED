@@ -71,6 +71,7 @@ and swallowed, so an archive problem can never change the run's exit code.
 from __future__ import annotations
 
 import contextlib
+import getpass
 import importlib.metadata
 import json
 import logging
@@ -79,7 +80,9 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
+import urllib.request
 from collections.abc import Mapping
 from datetime import datetime
 from html import escape
@@ -125,6 +128,15 @@ MAPPING_FILE = Path('config') / 'qatouch_case_mapping.json'
 # run.log is written here while the session runs (the run folder does not
 # exist yet) and copied into the archive at the end.
 RUN_LOG = Path('logs') / 'run.log'
+# The Chrome the session opened, written once by the first page fixture to
+# know it (record_browser_version) and read into the provenance at the
+# end. A file, because under xdist the workers open the browser and the
+# controller writes the archive.
+BROWSER_VERSION_FILE = Path('reports') / '.browser_version'
+# Google's version history: the current stable per platform, so the
+# archive can say whether a runner's Chrome is behind.
+LATEST_STABLE_URL = ('https://versionhistory.googleapis.com/v1/chrome/platforms/'
+                     '{platform}/channels/stable/versions')
 
 
 def configure(root):
@@ -138,8 +150,9 @@ def configure(root):
     at its own tree.
     """
     from soterix_qa_shared.reporting.layout import paths_for
-    global RUNS_DIR, SCREENSHOT_DIR, TRACE_DIR, RESULTS_JSON, MAPPING_FILE, RUN_LOG
+    global RUNS_DIR, SCREENSHOT_DIR, TRACE_DIR, RESULTS_JSON, MAPPING_FILE, RUN_LOG, BROWSER_VERSION_FILE
     p = paths_for(root)
+    BROWSER_VERSION_FILE = p['browser_version']
     RUNS_DIR = p['runs']
     SCREENSHOT_DIR = p['screenshots']
     TRACE_DIR = p['artifacts']
@@ -776,6 +789,58 @@ def _write_logs(dest: Path, state: _RunState) -> None:
         log.warning(f'run_archive: could not write run.log: {e}')
 
 
+def record_browser_version(version: str | None, channel: str | None = None) -> None:
+    """Note the browser this session opened, once: the first writer wins.
+
+    Called from the consumer's page fixture, the place the browser is
+    known; the archive reads it at session end into the provenance, so
+    the run says which Chrome ran it and the index can say whether that
+    Chrome is behind Google's stable.
+    """
+    if not version:
+        return
+    try:
+        if BROWSER_VERSION_FILE.exists():
+            return
+        BROWSER_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        BROWSER_VERSION_FILE.write_text(f'{version}\n{channel or ""}\n', encoding='utf-8')
+    except OSError as e:
+        log.debug(f'run_archive: could not record the browser version: {e}')
+
+
+def _read_browser_version() -> str | None:
+    try:
+        lines = BROWSER_VERSION_FILE.read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return None
+    return (lines[0].strip() or None) if lines else None
+
+
+def _stable_platform() -> str:
+    if sys.platform.startswith('win'):
+        return 'win64'
+    if sys.platform == 'darwin':
+        return 'mac'
+    return 'linux'
+
+
+def latest_stable_browser(timeout_s: float = 4.0) -> str | None:
+    """Chrome's current stable for this platform, from Google's version
+    history, or None when the network or the answer is not there. Asked
+    only when the run recorded a browser version, so a session that opened
+    no browser never waits on it."""
+    url = LATEST_STABLE_URL.format(platform=_stable_platform())
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:  # a fixed https url, never user input
+            data = json.loads(resp.read().decode('utf-8'))
+        versions = data.get('versions') or []
+        first = versions[0].get('version') if versions and isinstance(versions[0], dict) else None
+        return str(first) if first else None
+    except Exception as e:  # noqa: BLE001 - the latest version is a label; any failure reads as unknown
+        log.debug(f'run_archive: no latest stable browser: {e}')
+        return None
+
+
 def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> dict:
     """Where and with what the run happened, and which product it tested.
     Every field tolerates absence."""
@@ -787,7 +852,24 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
         'base_url_host': None,
         'git_commit': None, 'playwright': None, 'pytest_playwright': None,
         'browser': None, 'browser_channel': None, 'product': product or None,
+        # Which machine ran it, as whom, signed in as which account, on which
+        # Chrome: the box's nightly and a laptop run land in one archive and
+        # must read apart (09/17/2026).
+        'host': None, 'operator': None, 'account': None,
+        'browser_version': None, 'browser_latest': None,
     }
+    with contextlib.suppress(Exception):
+        out['host'] = socket.gethostname() or None
+    with contextlib.suppress(Exception):
+        out['operator'] = getpass.getuser() or None
+    try:
+        from config.base_config import get_credentials
+        out['account'] = str((get_credentials() or {}).get('email') or '') or None
+    except Exception as e:  # noqa: BLE001 - the account is a label; a consumer without the env module has none
+        log.debug(f'run_archive: no account: {e}')
+    out['browser_version'] = _read_browser_version()
+    if out['browser_version']:
+        out['browser_latest'] = latest_stable_browser()
     try:
         from config.base_config import config as env_config
         out['base_url_host'] = urlparse(str(env_config.get('base_url') or '')).netloc or None
@@ -981,7 +1063,10 @@ def _render_index(entries: list[dict], has_health: bool = False,
         provenance = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
         # Two boxes share one host and one target string; the box is what
         # tells their rows apart, so it sits beside the target when recorded.
+        # The machine sits beside it: the nightly's box and a laptop's run
+        # land in the same archive.
         box = str(provenance.get('box') or '')
+        host = str(provenance.get('host') or '')
         product = (summary_product(summary)
                    or target_product(summary.get('target') or [], default_key))
         exitstatus = summary.get('exitstatus')
@@ -998,7 +1083,8 @@ def _render_index(entries: list[dict], has_health: bool = False,
             # the readable form; the ISO stamp stays in the tooltip and the search words
             f'<span title="{escape(str(started), quote=True)}">{escape(friendly_stamp(started))}</span>',
             escape(product),
-            escape(str(target)) + (f' <code class="box">{escape(box)}</code>' if box else ''),
+            escape(str(target)) + (f' <code class="box">{escape(box)}</code>' if box else '')
+            + (f' <code class="host" title="ran on {escape(host, quote=True)}">{escape(host)}</code>' if host else ''),
             *[escape(str(counts.get(key, '-')))
               for key in ('passed', 'failed', 'skipped', 'errors')],
             outcome_html(exitstatus),
@@ -1006,12 +1092,15 @@ def _render_index(entries: list[dict], has_health: bool = False,
             '<span class="open">' + ''.join(links) + '</span>',
         ]
         words = ' '.join(str(w) for w in (started, friendly_stamp(started), product, target,
-                                           box, exit_outcome(exitstatus), name) if w)
+                                           box, host, provenance.get('account'),
+                                           provenance.get('operator'), provenance.get('browser_version'),
+                                           exit_outcome(exitstatus), name) if w)
         rows.append(f'<tr data-test="{escape(words.lower(), quote=True)}">'
                     + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
 
     body = '\n'.join(rows) if rows else ('<tr><td colspan="10">No archived runs '
                                          'yet. Run the suite once.</td></tr>')
+    runners = _runners_html(entries)
     health = ('<p><span class="open"><a href="health.html">Health</a></span> pass rates '
               'per target and module, and the tests to watch, across recent runs.</p>'
               if has_health
@@ -1039,6 +1128,8 @@ input#filter {{ width: min(100%, 36rem); padding: 0.45rem 0.7rem; font: inherit;
 .open a {{ border: 1px solid #9a9a9a; border-radius: 4px; padding: 0.1rem 0.5rem;
   font-size: 0.85rem; text-decoration: none; white-space: nowrap; }}
 .open a:hover {{ background: #eef3ff; }}
+code.host {{ background: #eef3ff; border-radius: 4px; padding: 0 0.3rem; }}
+.behind {{ color: #b00020; }}
 </style>
 </head>
 <body>
@@ -1049,7 +1140,8 @@ for its failures with their screenshots, video, and trace. <b>{INDEX_LINK_RAW_RE
 is the report file pytest wrote. The archive keeps the newest {KEEP_RUNS} runs of each
 target ({KEEP_RUNS_TOTAL} in total) and rebuilds this page after every run.</p>
 {health}
-<p><input id="filter" type="search" placeholder="Filter runs: product, target, outcome, date"
+{runners}
+<p><input id="filter" type="search" placeholder="Filter runs: product, target, machine, account, outcome, date"
  aria-label="Filter runs"><span id="filter-count"></span></p>
 <table>
 <tr><th>Started</th><th>Product</th><th>Target</th><th>Passed</th><th>Failed</th>
@@ -1061,6 +1153,35 @@ target ({KEEP_RUNS_TOTAL} in total) and rebuilds this page after every run.</p>
 </body>
 </html>
 '''
+
+
+def _runners_html(entries: list[dict]) -> str:
+    """One line naming each machine's Chrome, from its newest run that
+    recorded one, and whether Google's stable is newer. The box's nightly
+    and the laptops share this archive, and which Chrome ran a run is the
+    first question when a livestream test turns. Empty when no run
+    recorded a machine."""
+    newest: dict[str, dict] = {}
+    for entry in sorted(entries, key=lambda e: e.get('name', ''), reverse=True):
+        summary = entry.get('summary') or {}
+        prov = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
+        host, version = prov.get('host'), prov.get('browser_version')
+        if host and version and host not in newest:
+            newest[str(host)] = prov
+    if not newest:
+        return ''
+    parts = []
+    for host, prov in sorted(newest.items()):
+        version, latest = str(prov['browser_version']), prov.get('browser_latest')
+        browser = str(prov.get('browser_channel') or prov.get('browser') or 'browser').capitalize()
+        if latest and str(latest) != version:
+            note = f' <span class="behind">(stable {escape(str(latest))} is out: update it)</span>'
+        elif latest:
+            note = ' (current stable)'
+        else:
+            note = ''
+        parts.append(f'<code class="host">{escape(host)}</code> {escape(browser)} {escape(version)}{note}')
+    return '<p class="runners">Runners, by their newest run: ' + '; '.join(parts) + '.</p>'
 
 
 def _write_index(runs_dir: Path) -> None:
@@ -1134,6 +1255,10 @@ def pytest_sessionstart(session: Any) -> None:
     _state.started = time.time()
     if _archive_disabled(os.environ) or not _process_may_archive(session.config, os.environ):
         return
+    # An earlier run's browser version must not label this one; the
+    # archiving process clears it before any worker opens a browser.
+    with contextlib.suppress(OSError):
+        BROWSER_VERSION_FILE.unlink(missing_ok=True)
     try:
         _state.run_log.attach(RUN_LOG)
     except Exception as e:  # noqa: BLE001 - a lost run.log must never block the session

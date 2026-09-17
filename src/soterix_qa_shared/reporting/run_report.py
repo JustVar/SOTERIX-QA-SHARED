@@ -1480,11 +1480,18 @@ def _render_provenance(summary: dict, product: str = '') -> str:
     prov = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
     # Names read as names: Chromium / Chrome, Playwright, Env QA
     browser = ' / '.join(str(v).capitalize() for v in (prov.get('browser'), prov.get('browser_channel')) if v)
+    if prov.get('browser_version'):
+        browser = f"{browser} {prov['browser_version']}".strip()
+        latest = prov.get('browser_latest')
+        if latest and str(latest) != str(prov['browser_version']):
+            browser += f' (stable {latest} is out)'
     versions = ', '.join(
         f'{label} {prov[key]}' for label, key in
         (('Playwright', 'playwright'), ('Pytest-Playwright', 'pytest_playwright')) if prov.get(key))
     env = str(prov.get('env')).upper() if prov.get('env') else None
-    facts = (('Env', env), ('Box', prov.get('box')), ('Host', prov.get('base_url_host')),
+    facts = (('Env', env), ('Box', prov.get('box')), ('Tenant', prov.get('base_url_host')),
+             ('Machine', prov.get('host')), ('Operator', prov.get('operator')),
+             ('Account', prov.get('account')),
              ('Commit', prov.get('git_commit')), ('Browser', browser), ('Versions', versions))
     spans = [f'<span class="product">Product: {escape(product)}</span>'] if product else []
     spans += [f'<span>{label}: <code>{escape(str(value))}</code></span>'

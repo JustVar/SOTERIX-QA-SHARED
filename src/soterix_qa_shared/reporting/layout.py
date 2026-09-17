@@ -30,6 +30,9 @@ def paths_for(root: Path | str) -> dict[str, Path]:
         # copies these into a run folder before the next run wipes them.
         'screenshots': reports / 'screenshots',
         'artifacts': reports / 'artifacts',
+        # The Chrome the session opened, noted by the first page fixture
+        # to know it and read into the archive's provenance.
+        'browser_version': reports / '.browser_version',
         # The reporter's per-node-id record and the session log.
         'run_results': logs / 'last_run_results.json',
         'run_log': logs / 'run.log',

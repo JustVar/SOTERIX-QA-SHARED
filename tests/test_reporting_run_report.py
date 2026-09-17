@@ -1268,3 +1268,25 @@ def test_compact_row_shows_short_id_and_keeps_the_full_one(tmp_path):
     assert '<span>ui/views/test_x.py</span>' not in row
     assert 'alt="Final screenshot"' in row and '<figcaption>' not in row
     assert f'title="{shot.name}"' in row
+
+
+def test_provenance_line_names_machine_account_and_the_chrome_that_ran_it():
+    """The run page says which machine ran it, as whom, signed in as which
+    account, on which Chrome, and whether a newer stable is out; the tenant
+    host reads as Tenant, not Host, now that the machine is a fact too."""
+    from soterix_qa_shared.reporting import run_report as rr
+    summary = {'provenance': {'env': 'qa', 'box': 'india', 'base_url_host': 'vsaas-qa.example',
+                              'host': 'spartan1', 'operator': 'soterix', 'account': 'justin',
+                              'browser': 'chromium', 'browser_channel': 'chrome',
+                              'browser_version': '153.0.8010.36', 'browser_latest': '153.0.8010.47',
+                              'git_commit': 'b8ca3f8'}}
+    html = rr._render_provenance(summary, 'NexaiQ-Core')
+    for span in ('<span>Tenant: <code>vsaas-qa.example</code></span>', '<span>Machine: <code>spartan1</code></span>',
+                 '<span>Operator: <code>soterix</code></span>', '<span>Account: <code>justin</code></span>',
+                 '<span>Browser: <code>Chromium / Chrome 153.0.8010.36 (stable 153.0.8010.47 is out)</code></span>'):
+        assert span in html, span
+    assert 'Host:' not in html
+    current = {'provenance': {'browser_channel': 'chrome', 'browser_version': '1.0', 'browser_latest': '1.0'}}
+    assert '<span>Browser: <code>Chrome 1.0</code></span>' in rr._render_provenance(current, '')
+    assert 'Machine' not in rr._render_provenance({'provenance': {}}, '')
+
