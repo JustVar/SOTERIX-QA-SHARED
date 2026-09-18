@@ -1,11 +1,21 @@
 # Soterix QA Shared
 
-The QA Touch reporting pipeline for the Soterix test repositories, as one
-installable Python package. It stops the API client, the pytest reporter and
-the Jira layer from drifting apart in each repository that uses them.
+This package holds the code that the Soterix test repositories share. It
+does 3 jobs:
 
-Two repositories use it today: Soterix-WebApp-QA and Soterix-API-QA. Both
-import it through thin shims, so their old import paths still work.
+- It keeps the evidence of each test run and builds the pages that people
+  read: the run report, the archive index and the health page.
+- It sends results to QA Touch and makes sure that they arrived.
+- It holds the gates that stop a bad change, such as a suite that collects
+  fewer tests than before.
+
+How it works: the package is a set of pytest plugins and command line
+tools. A test repository names the package in its `requirements.txt` at a
+fixed tag. Thin shim modules in that repository point at the package, so
+the old import paths still work. Thus each repository runs the same
+reporter, the same client and the same gates.
+
+Two repositories use it: Soterix-WebApp-QA and Soterix-API-QA.
 
 ## Install
 
@@ -138,6 +148,14 @@ on zero collected, but reports nothing when a suite only shrinks.
 | `qatouch.artifacts` | The frozen shapes of the JSON other tools parse. |
 | `jira.client` | Creates an issue, or describes the one it would create. |
 | `jira.fields` | Maps test data onto a project's custom fields. |
+| `reporting.run_archive` | The pytest plugin that copies the evidence of each run into its own folder and builds the archive index. |
+| `reporting.run_report` | Builds `run.html` for one archived run: the verdict, the failures first, the history of each test. |
+| `reporting.health` | Builds the health page from the archived runs. |
+| `reporting.media` | The pytest plugin that saves one labeled screenshot for each UI test. |
+| `reporting.live` | The record of a run in progress, and the estimate of the time that is left. |
+| `reporting.layout` | Where a consumer repository keeps the evidence. |
+| `reporting.email` | Sends a run report by email through Microsoft Graph. |
+| `reporting.htmlblocks` | Evidence blocks for a pytest-html report. |
 | `reporting.products` | QA Touch project keys and the product each one stands for. |
 | `reporting.paths` | Fits a file name under the Windows 260 character limit. |
 | `reporting.branding` | The company logo, embedded into a report page. |
