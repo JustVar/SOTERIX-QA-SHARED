@@ -1324,3 +1324,33 @@ def test_error_line_skips_the_xdist_worker_banner():
     crash = "worker 'gw1' crashed while running 't::x'"
     assert rr.error_line(banner + chr(10) + crash) == crash
     assert rr.error_line("x = 1" + chr(10) + "E   assert 1 == 2") == 'assert 1 == 2'
+
+
+# ---------------------------------------------------------------- a run that was not archived says so
+
+def test_an_archive_failure_is_loud_and_leaves_its_reason(monkeypatch, tmp_path, capsys):
+    """stderr names the error and the free space; the marker beside run.log holds the same line;
+    a later good archive removes the marker."""
+    monkeypatch.setattr(ra, 'RUN_LOG', tmp_path / 'logs' / 'run.log')
+    monkeypatch.setattr(ra, 'RUNS_DIR', tmp_path / 'reports' / 'runs')
+    ra._say_archive_failed(OSError(28, 'No space left on device'))
+    err = capsys.readouterr().err
+    assert 'THIS RUN WAS NOT ARCHIVED: OSError' in err
+    assert 'No space left on device' in err
+    assert 'MB)' in err
+    marker = tmp_path / 'logs' / 'archive_failed.txt'
+    assert 'THIS RUN WAS NOT ARCHIVED' in marker.read_text(encoding='utf-8')
+    ra._clear_archive_failure()
+    assert not marker.exists()
+
+
+def test_a_nearly_full_disk_warns_at_session_start(monkeypatch, tmp_path, capsys):
+    """Under 1 GB free where the reports go: one stderr line; plenty of space: silence."""
+    monkeypatch.setattr(ra, 'RUNS_DIR', tmp_path)
+    monkeypatch.setattr(ra, '_free_mb', lambda path: 120)
+    ra._warn_low_disk()
+    assert 'only 120 MB free' in capsys.readouterr().err
+    monkeypatch.setattr(ra, '_free_mb', lambda path: 50_000)
+    ra._warn_low_disk()
+    assert capsys.readouterr().err == ''
+

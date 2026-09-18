@@ -1331,6 +1331,7 @@ def pytest_sessionstart(session: Any) -> None:
     _state.started = time.time()
     if _archive_disabled(os.environ) or not _process_may_archive(session.config, os.environ):
         return
+    _warn_low_disk()
     # An earlier run's browser version must not label this one; the
     # archiving process clears it before any worker opens a browser.
     with contextlib.suppress(OSError):
@@ -1528,6 +1529,52 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any)
         log.debug(f'run_archive: could not print advisories: {e}')
 
 
+LOW_DISK_BYTES = 1024 ** 3   # warn under 1 GB free where the reports are written
+
+
+def _archive_failure_marker() -> Path:
+    """Beside run.log: the one place a wrapper (run.py, a nightly script) can
+    read why the newest run has no archive folder."""
+    return RUN_LOG.parent / 'archive_failed.txt'
+
+
+def _free_mb(path: Path) -> int | None:
+    try:
+        probe = path if path.exists() else path.parent
+        return int(shutil.disk_usage(probe).free / (1024 * 1024))
+    except OSError:
+        return None
+
+
+def _say_archive_failed(error: BaseException) -> None:
+    """A run whose evidence could not be written said nothing on the terminal:
+    the warning went to a log file, and the wrapper then guessed 'no test ran'
+    (failure-mode audit, 09/18/2026). Say it where the reader is, and leave
+    the reason in a marker file."""
+    free = _free_mb(RUNS_DIR)
+    line = (f'run_archive: THIS RUN WAS NOT ARCHIVED: {type(error).__name__}: {error} '
+            f'(free space where reports are written: {free if free is not None else "unknown"} MB)')
+    print('\n' + line, file=sys.stderr, flush=True)
+    try:
+        marker = _archive_failure_marker()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(line + '\n', encoding='utf-8')
+    except OSError as e:
+        log.debug(f'run_archive: could not write the archive-failure marker: {e}')
+
+
+def _clear_archive_failure() -> None:
+    with contextlib.suppress(OSError):
+        _archive_failure_marker().unlink(missing_ok=True)
+
+
+def _warn_low_disk() -> None:
+    free = _free_mb(RUNS_DIR)
+    if free is not None and free * 1024 * 1024 < LOW_DISK_BYTES:
+        print(f'run_archive: only {free} MB free where reports are written ({RUNS_DIR}); '
+              f'this run may not be archived. Free space before a long run.', file=sys.stderr, flush=True)
+
+
 def pytest_unconfigure(config: Any) -> None:
     """Archive the finished run, prune old runs, rebuild the index.
 
@@ -1550,8 +1597,10 @@ def pytest_unconfigure(config: Any) -> None:
         return
     try:
         _archive_run(config, _state)
+        _clear_archive_failure()
     except Exception as e:  # noqa: BLE001 - archiving must never change the run's exit code
         log.warning(f'run_archive: could not archive the run: {e}')
+        _say_archive_failed(e)
     try:
         _prune_runs(RUNS_DIR)
     except Exception as e:  # noqa: BLE001 - pruning is best-effort housekeeping
