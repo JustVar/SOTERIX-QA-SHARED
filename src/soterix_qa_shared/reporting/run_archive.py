@@ -111,6 +111,8 @@ from soterix_qa_shared.reporting.run_report import (
     filter_script,
     friendly_stamp,
     module_of,
+    one_cause,
+    one_skip_reason,
     outcome_html,
     readable_title,
     summary_product,
@@ -165,7 +167,10 @@ def configure(root):
 #    None when it did not fail). "log_file" is set for failures only.
 # 4: each test record carries "product" (the name, see plugins/products)
 #    and provenance carries the run's "product".
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+# 5: adds collected / not_run / not_run_count / one_cause / one_skip_reason, and per test
+# reruns, rerun_error, teardown_error, crashed when they happened.
+NOT_RUN_LISTED = 500   # ids listed; not_run_count holds the true number
 
 # Per-test log files use the screenshot sanitizer and cap: the archive's
 # names then sort together, and the path cap already fits them.
@@ -224,13 +229,16 @@ UNIT_TEST_ROOTS = ('tests/plugins', 'tests/tools')
 
 # pytest's terminal convention: the call phase carries the test's outcome,
 # a setup crash is an error (the test never ran), a setup skip is the
-# test's skip. Teardown reports never represent the test itself.
+# test's skip, and a teardown failure is an error pytest counts and exits
+# 1 on. Until 09/18/2026 a teardown failure counted toward nothing here,
+# so the archive said 'passed' for a run pytest failed (evidence audit).
 _PHASE_OUTCOME_COUNTER = {
     ('call', 'passed'): 'passed',
     ('call', 'failed'): 'failed',
     ('call', 'skipped'): 'skipped',
     ('setup', 'failed'): 'errors',
     ('setup', 'skipped'): 'skipped',
+    ('teardown', 'failed'): 'errors',
 }
 
 # The same phases, in the per-test vocabulary run_report renders
@@ -387,8 +395,17 @@ def _unit_tests_only(args: list[str]) -> bool:
 
 
 def _classify(when: str, outcome: str) -> str | None:
-    """Map a report phase + outcome to a summary counter, or None to ignore."""
-    return _PHASE_OUTCOME_COUNTER.get((when, outcome))
+    """Map a report phase + outcome to a summary counter, or None to ignore.
+
+    A failed report whose phase is not one of pytest's three is one the
+    controller made up for a test it could not finish: xdist's 'worker
+    crashed while running' report carries when='???'. pytest counts it as
+    a failure; until 09/18/2026 this archive counted it as nothing.
+    """
+    counter = _PHASE_OUTCOME_COUNTER.get((when, outcome))
+    if counter is None and outcome == 'failed' and when not in ('setup', 'call', 'teardown'):
+        return 'failed'
+    return counter
 
 
 def _build_slug(args: list[str], markexpr: str = '') -> str:
@@ -667,17 +684,36 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
             'error': None, 'reason': None,
         }
     if report.outcome == 'rerun':
+        # Not final, but not nothing: a test that passed on its second
+        # attempt failed once, and the record says so.
+        rec['reruns'] = int(rec.get('reruns') or 0) + 1
+        rec.setdefault('rerun_error', error_line(getattr(report, 'longreprtext', '') or ''))
         return
     duration = float(getattr(report, 'duration', 0.0) or 0.0)
     rec['phases'][report.when] = round(duration, 3)
     rec['duration_s'] = round(sum(rec['phases'].values()), 3)
     outcome = _PHASE_TEST_OUTCOME.get((report.when, report.outcome))
+    if hasattr(report, 'wasxfail') and report.when in ('setup', 'call'):
+        # pytest reports an expected failure as 'skipped' and an unexpected
+        # pass as 'passed'; the page has words for both
+        outcome = {'skipped': 'xfailed', 'passed': 'xpassed'}.get(report.outcome, outcome)
+    elif outcome is None and report.outcome == 'failed':
+        if report.when == 'teardown':
+            # a failed or errored test keeps its own outcome; a pass or a skip
+            # whose teardown failed is an error, as pytest counts it
+            outcome = 'error' if rec['outcome'] in (None, 'passed', 'skipped', 'xfailed', 'xpassed') else None
+            rec['teardown_error'] = error_line(getattr(report, 'longreprtext', '') or '')
+        elif report.when not in ('setup', 'call'):
+            outcome = 'failed'       # the controller's stand-in for a test its worker died on
+            rec['crashed'] = True
     if outcome is not None:
         rec['outcome'] = outcome
     if outcome in FAILURE_OUTCOMES:
         # The line run_report groups failures by and checks against the
         # previous runs. Kept here so no later reader needs report.html.
         rec['error'] = error_line(getattr(report, 'longreprtext', '') or '')
+    if outcome == 'xfailed':
+        rec['reason'] = str(getattr(report, 'wasxfail', '') or '')
     if outcome == 'skipped':
         # A skip's reason is a measured fact now (the box `without` map, the
         # stream guard, require_items); until 09/11/2026 the record kept none
@@ -899,8 +935,19 @@ def _build_summary(*, started: float, ended: float, exitstatus: int | None,
                    keyword: str, report_file: str | None,
                    advisories: list[dict] | None = None,
                    tests: list[dict] | None = None,
-                   provenance: Mapping[str, Any] | None = None) -> dict:
-    """Build the summary.json payload. Fixed shape - the index renders it."""
+                   provenance: Mapping[str, Any] | None = None,
+                   collected: list[str] | None = None) -> dict:
+    """Build the summary.json payload. Fixed shape - the index renders it.
+
+    `collected` is what the session set out to run. A run that stopped
+    early (-x, --maxfail, a run cap, a dead controller) recorded only what
+    it reached and read as a small complete run; `collected` and `not_run`
+    say how much of the plan never ran. `one_cause` and `one_skip_reason`
+    name the error or the skip reason most of the run shares.
+    """
+    tests = tests or []
+    ran = {str(t.get('nodeid')) for t in tests}
+    not_run = [n for n in (collected or []) if n not in ran]
     return {
         'schema_version': SCHEMA_VERSION,
         'started': datetime.fromtimestamp(started).isoformat(timespec='seconds'),  # noqa: DTZ006 - local-time display of a run timestamp; tz would shift the shown time
@@ -915,7 +962,12 @@ def _build_summary(*, started: float, ended: float, exitstatus: int | None,
         'report_file': report_file,
         'provenance': dict(provenance or {}),
         'advisories': [dict(a) for a in (advisories or [])],
-        'tests': [dict(t, phases=dict(t.get('phases') or {})) for t in (tests or [])],
+        'collected': len(collected) if collected is not None else None,
+        'not_run': not_run[:NOT_RUN_LISTED],
+        'not_run_count': len(not_run),
+        'one_cause': one_cause(tests),
+        'one_skip_reason': one_skip_reason(tests),
+        'tests': [dict(t, phases=dict(t.get('phases') or {})) for t in tests],
     }
 
 
@@ -1194,6 +1246,29 @@ def _write_index(runs_dir: Path) -> None:
         encoding='utf-8')
 
 
+_OUTCOME_COUNTER = {'passed': 'passed', 'xpassed': 'passed', 'failed': 'failed',
+                    'skipped': 'skipped', 'xfailed': 'skipped', 'error': 'errors'}
+
+
+def _counts_of(state: _RunState) -> dict[str, int]:
+    """The summary's counts, one per TEST: the records' final outcomes.
+
+    The live counters count reports, as pytest's terminal does, and a pass
+    whose teardown failed is two reports: the verdict then read '8 of 12'
+    for a run of 11. Counting the records keeps counts and records equal.
+    A session with no records (the recorder failed) falls back to the
+    live counters, which are better than zeros.
+    """
+    if not state.tests:
+        return dict(state.counts)
+    counts = dict.fromkeys(('passed', 'failed', 'skipped', 'errors'), 0)
+    for rec in state.tests.values():
+        key = _OUTCOME_COUNTER.get(str(rec.get('outcome')))
+        if key:
+            counts[key] += 1
+    return counts
+
+
 def _archive_run(config: Any, state: _RunState) -> None:
     """Copy the finished run's outputs into its own dated folder."""
     markexpr = config.getoption('markexpr', default='') or ''
@@ -1217,12 +1292,13 @@ def _archive_run(config: Any, state: _RunState) -> None:
     product = (run_product(t.get('product') for t in state.tests.values())
                or product_name(product_for('', None, state.project_key())))
     summary = _build_summary(started=state.started, ended=ended,
-                             exitstatus=state.exitstatus, counts=state.counts,
+                             exitstatus=state.exitstatus, counts=_counts_of(state),
                              target=config.args, markexpr=markexpr,
                              keyword=keyword, report_file=report_file,
                              advisories=state.advisories,
                              tests=list(state.tests.values()),
-                             provenance=_provenance(config, os.environ, product))
+                             provenance=_provenance(config, os.environ, product),
+                             collected=list(state.collected) if state.collected else None)
     (dest / 'summary.json').write_text(json.dumps(summary, indent=2),
                                        encoding='utf-8')
     if state.advisories:
@@ -1405,12 +1481,38 @@ def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
     _state.exitstatus = int(exitstatus)
 
 
+def _print_one_cause(terminalreporter: Any) -> None:
+    """One line when most of the run failed, or skipped, for one reason: a
+    tenant that is down or a browser that is missing otherwise reads as
+    hundreds of unrelated failures (failure-mode audit, 09/18/2026)."""
+    tests = list(_state.tests.values())
+    cause, skip = one_cause(tests), one_skip_reason(tests)
+    not_run = [n for n in _state.collected if n not in _state.tests]
+    if not (cause or skip or not_run):
+        return
+    terminalreporter.section('read this first')
+    if cause:
+        terminalreporter.write_line(
+            f"ONE CAUSE, {cause['count']} of {cause['of']} failures: {cause['line']} "
+            f"(first: {cause['first']}). Fix this before reading the rest.")
+    if skip:
+        terminalreporter.write_line(f"{skip['count']} tests skipped for one reason: {skip['reason']}")
+    if not_run:
+        terminalreporter.write_line(
+            f'{len(not_run)} of {len(_state.collected)} collected tests did not run '
+            f'(first: {not_run[0]}). The counts below cover only what ran.')
+
+
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:
     """Print the run's advisory lines where the team will actually see them.
 
     Passing tests swallow their output, so the [VIEWS]/[LPR]/[EXPORT]
     markers would otherwise only exist inside the archive.
     """
+    try:
+        _print_one_cause(terminalreporter)
+    except Exception as e:  # noqa: BLE001 - a summary must never fail the run
+        log.debug(f'run_archive: could not print the one-cause lines: {e}')
     advisories = _state.advisories
     if not advisories:
         return

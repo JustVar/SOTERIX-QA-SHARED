@@ -20,6 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from soterix_qa_shared.reporting import run_archive as ra
+from soterix_qa_shared.reporting import run_report as rr
 
 
 @pytest.fixture(autouse=True)
@@ -281,8 +282,10 @@ def test_summary_shape():
     assert set(summary) == {'schema_version', 'started', 'ended', 'duration_s',
                             'exitstatus', 'counts', 'target', 'markexpr',
                             'keyword', 'report_file', 'advisories', 'tests',
-                            'provenance'}
-    assert summary['schema_version'] == 4
+                            'provenance', 'collected', 'not_run', 'not_run_count',
+                            'one_cause', 'one_skip_reason'}
+    assert summary['schema_version'] == 5
+    assert (summary['collected'], summary['not_run'], summary['not_run_count']) == (None, [], 0)
     assert summary['tests'] == []
     assert summary['provenance'] == {}
     assert summary['duration_s'] == 90.5
@@ -469,13 +472,21 @@ def test_classify_counted_phases(when, outcome, counter):
 
 @pytest.mark.parametrize(('when', 'outcome'), [
     ('setup', 'passed'),      # setup success is not a result yet
-    ('teardown', 'failed'),   # teardown reports never represent the test
     ('teardown', 'passed'),
     ('call', 'rerun'),        # rerun outcomes are not final
+    ('???', 'passed'),
 ])
 def test_classify_ignored_phases(when, outcome):
-    """Setup passes, teardown reports, and reruns count toward nothing."""
+    """Setup passes, clean teardowns and reruns count toward nothing."""
     assert ra._classify(when, outcome) is None
+
+
+def test_classify_counts_what_pytest_counts():
+    """A teardown failure is an error and a crashed worker's stand-in report
+    (when='???') is a failure: pytest exits 1 on both, and until 09/18/2026
+    this archive counted neither."""
+    assert ra._classify('teardown', 'failed') == 'errors'
+    assert ra._classify('???', 'failed') == 'failed'
 
 
 # ---------------------------------------------------------------------------
@@ -896,7 +907,50 @@ class TestRecordPhase:
         assert state.tests[self.NODEID]['error'] is None
         ra.record_phase(state, _FakePhaseReport(self.NODEID, 'teardown', 'failed', 1.0,
                                                 longrepr='E   teardown boom'))
-        assert state.tests[self.NODEID]['error'] is None  # teardown never speaks for the test
+        # a pass whose teardown failed is an error, as pytest counts it
+        assert state.tests[self.NODEID]['outcome'] == 'error'
+        assert state.tests[self.NODEID]['error'] == 'teardown boom'
+        assert state.tests[self.NODEID]['teardown_error'] == 'teardown boom'
+
+    def test_a_failed_test_keeps_its_own_error_when_teardown_fails_too(self):
+        """The call's failure is the test's story; the teardown error is kept beside it."""
+        state = self._state()
+        ra.record_phase(state, _FakePhaseReport(self.NODEID, 'call', 'failed', 1.0, longrepr='E   call boom'))
+        ra.record_phase(state, _FakePhaseReport(self.NODEID, 'teardown', 'failed', 1.0, longrepr='E   teardown boom'))
+        rec = state.tests[self.NODEID]
+        assert (rec['outcome'], rec['error'], rec['teardown_error']) == ('failed', 'call boom', 'teardown boom')
+
+    def test_a_crashed_worker_report_is_a_recorded_failure(self):
+        """xdist's stand-in report has when='???': the record is a failure with its line, marked crashed."""
+        state = self._state()
+        ra.record_phase(state, _FakePhaseReport(self.NODEID, '???', 'failed', 0.0,
+                                                longrepr="worker 'gw1' crashed while running 'x'"))
+        rec = state.tests[self.NODEID]
+        assert rec['outcome'] == 'failed'
+        assert rec['crashed'] is True
+        assert "worker 'gw1' crashed" in rec['error']
+
+    def test_a_rerun_is_counted_on_the_record_and_keeps_its_first_error(self):
+        """Passed on the second attempt: outcome passed, reruns 1, the first attempt's line kept."""
+        state = self._state()
+        ra.record_phase(state, _FakePhaseReport(self.NODEID, 'call', 'rerun', 1.0, longrepr='E   first boom'))
+        ra.record_phase(state, _FakePhaseReport(self.NODEID, 'call', 'passed', 1.0))
+        rec = state.tests[self.NODEID]
+        assert (rec['outcome'], rec['reruns'], rec['rerun_error']) == ('passed', 1, 'first boom')
+
+    def test_expected_failures_and_unexpected_passes_get_their_own_words(self):
+        """pytest says skipped and passed; the record says xfailed and xpassed, with the xfail reason."""
+        state = self._state()
+        report = _FakePhaseReport(self.NODEID, 'call', 'skipped', 1.0, longrepr='[gw0] noise')
+        report.wasxfail = 'the app returns 500 here'
+        ra.record_phase(state, report)
+        assert state.tests[self.NODEID]['outcome'] == 'xfailed'
+        assert state.tests[self.NODEID]['reason'] == 'the app returns 500 here'
+        state = self._state()
+        report = _FakePhaseReport(self.NODEID, 'call', 'passed', 1.0)
+        report.wasxfail = ''
+        ra.record_phase(state, report)
+        assert state.tests[self.NODEID]['outcome'] == 'xpassed'
 
     def test_title_falls_back_to_the_function_name(self):
         """Without a docstring, the record's title comes from the function name."""
@@ -1217,3 +1271,56 @@ def test_index_shows_the_machine_beside_the_target_and_a_runners_line():
     assert 'justin' in html and 'justinvarughese' in html  # the filter words carry account and operator
     assert '<p class="runners">' not in ra._render_index([_entry('2026-09-15_04-00-00__tests-ui', {'target': ['tests/ui']})])
 
+
+# ---------------------------------------------------------------- a run that stopped early, and one cause
+
+def _summary_for(tests, collected=None):
+    return ra._build_summary(started=1000.0, ended=1010.0, exitstatus=1,
+                             counts={'passed': 0, 'failed': len(tests), 'skipped': 0, 'errors': 0},
+                             target=['tests/ui'], markexpr='', keyword='', report_file=None,
+                             tests=tests, collected=collected)
+
+
+def test_a_run_that_stopped_early_says_how_much_never_ran():
+    """Two of fifteen ran: the summary names the thirteen that did not, instead of reading as a run of two."""
+    collected = [f't.py::test_{i}' for i in range(15)]
+    tests = [{'nodeid': 't.py::test_0', 'outcome': 'passed'}, {'nodeid': 't.py::test_1', 'outcome': 'failed', 'error': 'boom'}]
+    summary = _summary_for(tests, collected)
+    assert (summary['collected'], summary['not_run_count']) == (15, 13)
+    assert summary['not_run'][0] == 't.py::test_2'
+    assert 'collected tests did not run' in rr.run_verdict(1, 1, 0, not_run=13)
+
+
+def test_one_cause_names_the_error_most_failures_share():
+    """Five failures with one signature (numbers and quotes differ) are one cause; four are not."""
+    def fail(i, line):
+        return {'nodeid': f't.py::test_{i}', 'outcome': 'failed', 'error': line}
+    same = [fail(i, f"Page.goto: net::ERR_CONNECTION_REFUSED at https://x/auth/login after {i}000 ms") for i in range(5)]
+    cause = _summary_for(same + [fail(9, 'other')])['one_cause']
+    assert (cause['count'], cause['of'], cause['first']) == (5, 6, 't.py::test_0')
+    assert 'ERR_CONNECTION_REFUSED' in cause['line']
+    assert _summary_for(same[:4])['one_cause'] is None
+    skips = [{'nodeid': f't.py::s{i}', 'outcome': 'skipped', 'reason': 'box us streams H.265 and this browser cannot decode it'}
+             for i in range(21)]
+    assert _summary_for(skips)['one_skip_reason']['count'] == 21
+    assert _summary_for(skips[:20])['one_skip_reason'] is None
+
+
+def test_the_summary_counts_tests_not_reports():
+    """A pass whose teardown failed is two reports and one test: the counts follow the records."""
+    state = ra._RunState()
+    state.counts.update({'passed': 3, 'failed': 7, 'errors': 1, 'skipped': 1})
+    for i, outcome in enumerate(['passed', 'passed', 'error', 'xfailed', 'xpassed', 'failed', None]):
+        state.tests[f't::{i}'] = {'nodeid': f't::{i}', 'outcome': outcome}
+    assert ra._counts_of(state) == {'passed': 3, 'failed': 1, 'skipped': 1, 'errors': 1}
+    empty = ra._RunState()
+    empty.counts.update({'passed': 2})
+    assert ra._counts_of(empty)['passed'] == 2
+
+
+def test_error_line_skips_the_xdist_worker_banner():
+    """A crashed worker's report leads with '[gw1] win32 -- Python ...'; the crash line is the one kept."""
+    banner = "[gw1] win32 -- Python 3.14.6 C:/venv/python.exe"
+    crash = "worker 'gw1' crashed while running 't::x'"
+    assert rr.error_line(banner + chr(10) + crash) == crash
+    assert rr.error_line("x = 1" + chr(10) + "E   assert 1 == 2") == 'assert 1 == 2'

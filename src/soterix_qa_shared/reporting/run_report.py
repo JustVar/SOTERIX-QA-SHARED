@@ -90,11 +90,12 @@ import os
 import re
 import sys
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
@@ -254,6 +255,11 @@ class TestRecord:
     seen: dict | None = None
     # history_facts() over the archived runs of this target.
     history: dict = field(default_factory=dict)
+    # True when summary.json gave this test its outcome: a leftover failure
+    # screenshot or trace then never overrides it (a test that passed on a
+    # rerun kept its first attempt's trace and was listed under Failures).
+    recorded: bool = False
+    reruns: int = 0
 
     @property
     def safe(self) -> str:
@@ -381,10 +387,18 @@ def first_line(text: str) -> str:
     return next((line.strip() for line in (text or '').splitlines() if line.strip()), '')
 
 
+# xdist prefixes a worker's longrepr with its banner, '[gw1] win32 -- Python 3.14.6 C:\...':
+# true of every test on that worker, so never the line that names a failure.
+_WORKER_BANNER_RE = re.compile(r'^\[gw\d+\] \S+ -- Python \S+.*$', re.MULTILINE)
+
+
 def error_line(longrepr: str) -> str:
     """The one line that names a failure: the first 'E ' line of pytest's
-    longrepr, else its first non-empty line, capped for summary.json."""
-    return first_line(_headline(longrepr) or longrepr)[:ERROR_LINE_MAX]
+    longrepr, else its first non-empty line, capped for summary.json. An
+    xdist worker banner is skipped: a crashed worker's stand-in report
+    carries the banner first and the crash message after it."""
+    text = _WORKER_BANNER_RE.sub('', longrepr or '')
+    return first_line(_headline(text) or text)[:ERROR_LINE_MAX]
 
 
 def error_signature(text: str) -> str:
@@ -665,6 +679,46 @@ def signatures_seen(history: list[dict]) -> dict[str, dict]:
     return seen
 
 
+ONE_CAUSE_MIN = 5        # failures sharing one error signature before it is called the cause
+ONE_SKIP_MIN = 20        # skips sharing one reason before the run says so in one line
+
+
+def one_cause(tests: Iterable[Mapping[str, Any]]) -> dict | None:
+    """The error most of the failures share, when at least ONE_CAUSE_MIN do.
+
+    {'count', 'of', 'line', 'first'}: how many failures carry the
+    signature, of how many failures, the first one's error line, and its
+    node id. None when no signature reaches the bar.
+    """
+    failing = [t for t in tests if str(t.get('outcome')) in FAILURE_OUTCOMES]
+    by_sig: dict[str, list[Mapping[str, Any]]] = {}
+    for t in failing:
+        sig = error_signature(str(t.get('error') or ''))
+        if sig:
+            by_sig.setdefault(sig, []).append(t)
+    if not by_sig:
+        return None
+    group = max(by_sig.values(), key=len)
+    if len(group) < ONE_CAUSE_MIN:
+        return None
+    return {'count': len(group), 'of': len(failing), 'line': str(group[0].get('error') or ''),
+            'first': str(group[0].get('nodeid') or '')}
+
+
+def one_skip_reason(tests: Iterable[Mapping[str, Any]]) -> dict | None:
+    """The reason most of the skips share, when more than ONE_SKIP_MIN do: {'count', 'reason'}."""
+    by_reason: dict[str, list[str]] = {}
+    for t in tests:
+        if str(t.get('outcome')) == 'skipped' and t.get('reason'):
+            by_reason.setdefault(error_signature(str(t['reason'])), []).append(str(t['reason']))
+    if not by_reason:
+        return None
+    group = max(by_reason.values(), key=len)
+    if len(group) <= ONE_SKIP_MIN:
+        return None
+    return {'count': len(group), 'reason': group[0]}
+
+
 def group_failures(failures: list[TestRecord]) -> list[list[TestRecord]]:
     """Failures grouped by signature, each group placed where its first
     member was. A failure without a signature stands alone."""
@@ -686,7 +740,8 @@ def plural(count: int, one: str, many: str) -> str:
 
 
 def run_verdict(passed: int, failed: int, skipped: int,
-                deltas: Mapping[str, str] | None = None) -> str:
+                deltas: Mapping[str, str] | None = None, *,
+                not_run: int = 0, reruns: int = 0) -> str:
     """The run in one sentence of plain words, numbers exact.
 
     "3 of 49 tests failed - 2 new failures, 1 still failing; 1 test
@@ -715,6 +770,10 @@ def run_verdict(passed: int, failed: int, skipped: int,
         text += f' - {detail}'
     if skipped:
         text += f'; {plural(skipped, "test skipped", "tests skipped")}'
+    if reruns:
+        text += f'; {plural(reruns, "test passed on a rerun", "tests passed on a rerun")}'
+    if not_run:
+        text += f'; {plural(not_run, "collected test did not run", "collected tests did not run")}'
     return text + '.'
 
 
@@ -934,6 +993,8 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
         outcome = _HTML_OUTCOMES.get(str(row.get('outcome') or '').lower())
         if outcome and _worse(outcome, rec.outcome):
             rec.outcome = outcome
+        rec.recorded = bool(outcome)
+        rec.reruns = int(row.get('reruns') or 0)
     for nodeid, row in load_report_results(run_dir).items():
         rec = tests.setdefault(nodeid, TestRecord(nodeid))
         rec.duration, rec.log = row['duration'], row['log']
@@ -979,7 +1040,7 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
                     lambda safe, s=suffix, f=frame: f'{safe}__{s}{f}',
                     _SUFFIX_OUTCOMES[suffix])
         (rec.frames if frame else rec.screenshots).append(rel(png))
-        if _worse(_SUFFIX_OUTCOMES[suffix], rec.outcome):
+        if not rec.recorded and _worse(_SUFFIX_OUTCOMES[suffix], rec.outcome):
             rec.outcome = _SUFFIX_OUTCOMES[suffix]
 
     traces_dir = run_dir / 'traces'
@@ -1000,7 +1061,7 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
             rec.screenshots.append(rel(artifact))
         else:
             rec.traces.append(rel(artifact))
-        if kind != 'screenshot' and _worse(fallback, rec.outcome):
+        if kind != 'screenshot' and not rec.recorded and _worse(fallback, rec.outcome):
             rec.outcome = fallback
 
     return tests, unattached
@@ -1074,6 +1135,7 @@ h3.title { margin: 0; }
 .chip.seen-before { color: var(--muted); }
 .chip.flaky { color: var(--skip); background: var(--skip-bg); border-color: var(--skip); }
 .verdict { font-size: 1.1rem; font-weight: 600; margin: .25rem 0 .75rem; }
+ul.read-first { border-left: 4px solid #b00020; margin: 0 0 1rem; padding: .4rem .4rem .4rem 1.6rem; background: #fff4f4; }
 ul.verdict { padding-left: 1.25rem; }
 .product { font-weight: 600; color: var(--fg); }
 ul.verdict .product { font-weight: 400; color: var(--muted); margin-left: .5rem; font-size: .95rem; }
@@ -1499,6 +1561,27 @@ def _render_provenance(summary: dict, product: str = '') -> str:
     return '<div class="meta">' + ''.join(spans) + '</div>' if spans else ''
 
 
+def _read_first_html(summary: Mapping[str, Any]) -> str:
+    """The lines to read before the failure list: one cause shared by most
+    failures, one reason shared by most skips, and how much of the plan
+    never ran. Empty when none applies."""
+    lines = []
+    cause = summary.get('one_cause') if isinstance(summary.get('one_cause'), dict) else None
+    if cause:
+        lines.append(f"One cause, {cause.get('count')} of {cause.get('of')} failures: {cause.get('line')} "
+                     f"(first: {cause.get('first')}). Fix this before reading the rest.")
+    skip = summary.get('one_skip_reason') if isinstance(summary.get('one_skip_reason'), dict) else None
+    if skip:
+        lines.append(f"{skip.get('count')} tests skipped for one reason: {skip.get('reason')}")
+    not_run = int(summary.get('not_run_count') or 0)
+    if not_run:
+        lines.append(f"{not_run} of {summary.get('collected')} collected tests did not run; "
+                     f"the counts cover only what ran.")
+    if not lines:
+        return ''
+    return '<ul class="read-first">' + ''.join(f'<li>{escape(line)}</li>' for line in lines) + '</ul>'
+
+
 def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord],
                       unattached: list[str], previous: Mapping | None = None,
                       verdict: str = '', product: str = '') -> str:
@@ -1556,6 +1639,7 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
     else:
         compared = f'<p class="case">{escape(delta_wording(None))}</p>'
     verdict_html = f'<p class="verdict">{escape(verdict)}</p>' if verdict else ''
+    verdict_html += _read_first_html(summary)
 
     advisories = [a for a in (summary.get('advisories') or []) if isinstance(a, dict)]
     if advisories:
@@ -1678,7 +1762,9 @@ def build_run_report(run_dir: Path) -> str:
         passed = sum(1 for o in outcomes.values() if o in PASSED_OUTCOMES)
         failed = sum(1 for o in outcomes.values() if o in FAILURE_OUTCOMES)
         skipped = sum(1 for o in outcomes.values() if o in SKIPPED_OUTCOMES)
-    verdict = run_verdict(passed, failed, skipped, chips)
+    verdict = run_verdict(passed, failed, skipped, chips,
+                          not_run=int(summary.get('not_run_count') or 0),
+                          reruns=sum(1 for t in tests.values() if t.reruns and t.outcome in PASSED_OUTCOMES))
     return render_run_report(run_dir, summary, tests, unattached, previous=previous,
                              verdict=verdict, product=product)
 

@@ -1290,3 +1290,33 @@ def test_provenance_line_names_machine_account_and_the_chrome_that_ran_it():
     assert '<span>Browser: <code>Chrome 1.0</code></span>' in rr._render_provenance(current, '')
     assert 'Machine' not in rr._render_provenance({'provenance': {}}, '')
 
+
+def test_a_recorded_outcome_is_not_overridden_by_a_leftover_trace(tmp_path):
+    """A test that passed on its rerun keeps its first attempt's trace; the page
+    listed it under Failures while the summary said passed (two real runs,
+    evidence audit 09/18/2026). The summary's word now stands."""
+    import json
+    run = tmp_path / '2026-09-18_10-00-00__tests-ui'
+    (run / 'traces').mkdir(parents=True)
+    nodeid = 'tests/ui/x/test_x.py::test_flaps[chromium]'
+    (run / 'summary.json').write_text(json.dumps({
+        'schema_version': 5, 'counts': {'passed': 1, 'failed': 0, 'skipped': 0, 'errors': 0},
+        'tests': [{'nodeid': nodeid, 'outcome': 'passed', 'reruns': 1, 'duration_s': 1.0}]}), encoding='utf-8')
+    (run / 'traces' / 'tests-ui-x-test_x.py-test_flaps-chromium-trace.zip').write_bytes(b'x')
+    tests, _ = rr.collect_tests(run)
+    assert tests[nodeid].outcome == 'passed'
+    assert tests[nodeid].reruns == 1
+    assert tests[nodeid].traces  # the trace is still attached as evidence
+    assert 'passed on a rerun' in rr.run_verdict(1, 0, 0, reruns=1)
+
+
+def test_the_page_opens_with_what_to_read_first():
+    """One cause, one skip reason and the unrun count lead the page; nothing when none applies."""
+    html = rr._read_first_html({'one_cause': {'count': 187, 'of': 190, 'line': 'BrowserType.launch: not found', 'first': 't::a'},
+                                'one_skip_reason': {'count': 49, 'reason': 'cannot decode H.265'},
+                                'not_run_count': 13, 'collected': 15})
+    assert 'One cause, 187 of 190 failures: BrowserType.launch: not found' in html
+    assert '49 tests skipped for one reason: cannot decode H.265' in html
+    assert '13 of 15 collected tests did not run' in html
+    assert rr._read_first_html({}) == ''
+
