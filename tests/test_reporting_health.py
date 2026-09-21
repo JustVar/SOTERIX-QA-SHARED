@@ -319,7 +319,7 @@ def test_render_health_has_every_section_and_run_links(monkeypatch):
     """The health page shows every section, links each run and handles an empty archive."""
     monkeypatch.delenv('QATOUCH_PROJECT_ID', raising=False)
     page = hs.render_health(hs.aggregate(RUNS, 20), generated='2026-08-24T15:00:00')
-    for heading in ('Products (1)', 'Modules (2)', 'Tests to watch (1)'):
+    for heading in ('Products (1)', 'Modules (2)', 'Tests to watch (1 test in 1 module)'):
         assert heading in page
     for gone in ('Flaky candidates', 'Newly failing', 'Slowest tests', 'Test health', 'exit 1',
                  'Advisories', 'Targets', 'unknown'):
@@ -347,7 +347,9 @@ def test_render_health_has_every_section_and_run_links(monkeypatch):
             'title="Aug 24, 12:00 PM: Failed"></a>') in watch
     assert '33% (1 of 3 failed) <span class="chip delta flaky">Flaky</span>' in watch
     assert '<a href="2026-08-24_12-00-00__views/run.html">Aug 24, 12:00 PM</a>' in watch
-    assert '<td>Views<div class="nodeid">ui/views/test_a.py</div></td>' in watch
+    # the module is a block that opens on a click, and it says what it holds
+    assert '<details class="watch-module"><summary><span class="name">Views</span>' in watch
+    assert '1 test, worst 33%' in watch
     assert 'passed 2/3' not in watch  # the strip text is the rate column's job here
     assert 'prefers-color-scheme: dark' in page
     assert 'href="index.html"' in page
@@ -571,3 +573,43 @@ def test_cli_without_runs_writes_nothing(tmp_path, capsys):
     assert hs.main(['--runs-dir', str(tmp_path / 'none')]) == 0
     assert 'No archived runs' in capsys.readouterr().out
     assert not (tmp_path / 'none' / 'health.html').exists()
+
+
+def _row(nodeid: str, outcome: str, module: str = 'ui/views/test_a.py', title: str = 'A title') -> dict:
+    return {'nodeid': nodeid, 'module': module, 'title': title, 'outcome': outcome, 'duration_s': 5}
+
+
+def test_a_test_with_an_xdist_group_suffix_is_the_same_test():
+    """'test_one[chromium]' and 'test_one[chromium]@account_views' are 1 history, so the watch list names it 1 time."""
+    grouped = A + '@account_views'
+    runs = [_run('2026-09-21_09-00-00__views', {'failed': 1}, tests=[_row(grouped, 'failed')], exitstatus=1),
+            _run('2026-09-17_09-00-00__views', {'passed': 1}, tests=[_row(A, 'passed')])]
+    agg = hs.aggregate(runs, 20)
+    assert [w['nodeid'] for w in agg['watch']] == [A]
+    assert agg['watch'][0]['facts']['failed'] == 1
+    assert len(agg['watch'][0]['facts']['blocks']) == 2
+
+
+def test_a_parametrized_test_is_one_row_and_its_variants_fold_below_it():
+    """10 cameras that fail 1 test are 1 row ('9 of 10 variants failed'), not 9 rows; modules come worst first."""
+    base = 'tests/c2c/test_c2c_video.py::TestVideo::test_codec'
+    cams = [f'{base}[chromium-cam-{n}]' for n in range(10)]
+    newest = [_row(c, 'passed' if n == 0 else 'failed', 'c2c/test_c2c_video.py', 'Codec') for n, c in enumerate(cams)]
+    older = [_row(c, 'passed', 'c2c/test_c2c_video.py', 'Codec') for c in cams]
+    runs = [_run('2026-09-21_10-00-00__c2c', {'passed': 1, 'failed': 9}, tests=newest, exitstatus=1, target=['tests/c2c']),
+            _run('2026-09-20_10-00-00__c2c', {'passed': 10}, tests=older, target=['tests/c2c']),
+            RUNS[0], RUNS[1]]
+    agg = hs.aggregate(runs, 20)
+    assert len(agg['watch']) == 10          # the flat list still holds every variant
+    groups = agg['watch_groups']
+    assert [len(m['rows']) for m in groups] == [1, 1]
+    folded = next(r for m in groups for r in m['rows'] if r['base'] == base)
+    assert (len(folded['variants']), folded['variant_total']) == (9, 10)
+    page = hs.render_health(agg, generated='2026-09-21T12:00:00')
+    watch = page[page.index('id="watch"'):]
+    assert 'Tests to watch (2 tests in 2 modules)' in page
+    assert '9 of 10 variants failed: show them' in watch
+    assert '<code>chromium-cam-3</code>' in watch
+    assert watch.count('<details class="watch-module">') == 2
+    assert 'Open all' in watch
+

@@ -26,9 +26,25 @@ MappingValue = 'str | Mapping[str, str]'
 _PARAM_RE = re.compile(r'\[.*\]$')
 
 
+def canonical_nodeid(nodeid: str) -> str:
+    """The node id without the '@<group>' that pytest-xdist adds under --dist loadgroup.
+
+    A test with an xdist_group mark reports as 'file::test_x[chromium]@account_views'.
+    The same test had no suffix before it got the mark, and has none in a run with no -n.
+    Read as 2 tests, its history split in 2, the health page listed it 2 times, and
+    the '[param]$' rule below stopped matching, so its QA Touch case was not found
+    (found 09/21/2026). A parameter can hold an '@' ('test[a@b.com]'): only a last
+    part with no bracket in it is a group.
+    """
+    head, sep, tail = nodeid.rpartition('@')
+    if sep and head and '[' not in tail and ']' not in tail and '::' not in tail:
+        return head
+    return nodeid
+
+
 def function_base(nodeid: str) -> str:
-    """Strip the [param] suffix: file::Class::test_x[chromium] -> file::Class::test_x."""
-    return _PARAM_RE.sub('', nodeid)
+    """Strip the group and the [param] suffix: file::Class::test_x[chromium]@g -> file::Class::test_x."""
+    return _PARAM_RE.sub('', canonical_nodeid(nodeid))
 
 
 def key_for(value: str | Mapping[str, str] | None, project: str | None) -> str | None:

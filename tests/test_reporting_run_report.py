@@ -423,7 +423,7 @@ def test_build_run_report_orders_sections_and_links_evidence(tmp_path):
     for key, value in (('passed', '1'), ('failed', '1'), ('skipped', '1'), ('errors', '0')):
         assert f'class="chip {key}">{key.capitalize()}: {value}</span>' in page
     # The failure card: message, call log, actions, console, evidence.
-    card = page[page.index('<div class="card failed"'):page.index('id="advisories"')]
+    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
     assert 'Locator.click: Timeout 30000ms exceeded.' in card
     assert 'waiting for locator' in card
     for fact in ('class="failing"', 'locator.click', 'Console errors (2)', 'Uncaught TypeError'):
@@ -470,7 +470,7 @@ def test_run_page_says_outcome_and_notes_in_words(tmp_path):
     """The header reads Outcome, not Exit status, and the advisory section
     reads Notes with its tooltip, under the anchor the health page links."""
     page = rr.build_run_report(_make_run(tmp_path))
-    assert 'Outcome: <span title="exit code 1">Failed</span>' in page
+    assert '<dt>Outcome</dt><dd><span title="exit code 1">Failed</span></dd>' in page
     assert 'Exit status' not in page
     assert f'<h2 id="advisories" title="{rr.NOTES_TITLE}">Notes (1)</h2>' in page
     assert 'Advisories (' not in page
@@ -487,8 +487,8 @@ def test_build_run_report_survives_an_empty_folder(tmp_path):
     page = rr.build_run_report(run)
     assert 'Failures (0)' in page
     assert 'No failures in this run.' in page
-    assert 'Duration: -</span>' in page
-    assert 'Outcome: -' in page
+    assert '<dt>Duration</dt><dd>-</dd>' in page
+    assert '<dt>Outcome</dt><dd>-</dd>' in page
     assert '<summary>Passed (0)</summary>' in page
     assert 'all' in page  # the target from the folder name
 
@@ -656,7 +656,7 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     (prev / 'run.html').write_text('x', encoding='utf-8')
     page = rr.build_run_report(run)
 
-    card = page[page.index('<div class="card failed"'):page.index('id="advisories"')]
+    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
     # Title first, QA Touch case second, node id beneath; never a renamed test.
     assert (card.index('Verify the view opens.') < card.index('QA Touch VK1: Open a view')
             < card.index(f'<div class="nodeid">{NODEID}</div>'))
@@ -669,7 +669,7 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     assert 'Flaky 50%' in card
     assert ('class="blk passed" href="../2026-08-23_10-00-00__tests-ui-views/run.html" '
             'title="Aug 23, 10:00 AM: Passed"') in card
-    key = re.search(r'<div class="card failed"[^>]*data-test="([^"]*)"', page).group(1)
+    key = re.search(r'<details class="card failed"[^>]*data-test="([^"]*)"', page).group(1)
     assert 'verify the view opens.' in key
     assert NODEID.lower() in key
     assert 'vk1' in key
@@ -678,11 +678,11 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     assert 'chip delta new-test">New test<' in page
     assert '<h4 class="module">ui/c2c/test_cams.py (1)</h4>' in page
     # Header provenance, the verdict, and the plain-language delta note.
-    for fact in ('Env: <code>QA</code>', 'Box: <code>us</code>', 'app.example.com', 'abc1234',
+    for fact in ('<dt>Env</dt><dd>QA</dd>', '<dt>Box</dt><dd>us</dd>', 'app.example.com', 'abc1234',
                  'Chromium / Chrome', 'Playwright 1.62.0, Pytest-Playwright 0.9.0'):
         assert fact in page
     # The box sits between Env and Host: the two boxes share a host.
-    assert page.index('Env: <code>QA</code>') < page.index('Box: <code>us</code>') < page.index('app.example.com')
+    assert page.index('<dt>Env</dt><dd>QA</dd>') < page.index('<dt>Box</dt><dd>us</dd>') < page.index('app.example.com')
     assert '<p class="verdict">1 of 3 tests failed - 1 new failure, 1 fixed; 1 test skipped.</p>' in page
     assert ('Changes since the <a href="../2026-08-23_10-00-00__tests-ui-views/run.html">'
             'previous run of these tests (Aug 23, 10:00 AM)</a>. Each changed test carries a '
@@ -893,14 +893,16 @@ def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
     (prev / 'run.html').write_text('x', encoding='utf-8')
     page = rr.build_run_report(run)
     assert 'Failures (3)' in page
-    group = page[page.index('<div class="group">'):page.index('</div>\n</div>') + 12]
+    # 3 failures: the page is short, so the group and the single card start open
+    group = page[page.index('<details class="group" open>'):page.index('</details>\n</details>') + 20]
     assert '<b>2 tests share this error</b>' in group
-    assert group.count('<div class="card failed"') == 2
+    assert group.count('<details class="card failed"') == 2
+    assert 'Expand all' not in page
     assert '<span class="chip delta new-error">New error</span>' in group
     # The label sits on the group head once, not on every member card.
     assert group.count('New error') == 1
     # The assertion failure stands alone and was seen in the previous run.
-    single = page[page.index('<div class="card failed" id="tests-ui-c2c-test_cams.py-TestCams-test_reboot-camera-4"'):]
+    single = page[page.index('<details class="card failed" id="tests-ui-c2c-test_cams.py-TestCams-test_reboot-camera-4"'):]
     assert ('<span class="chip delta seen-before">Seen before (last on '
             '<a href="../2026-08-23_10-00-00__tests-ui-views/run.html">Aug 23, 10:00 AM</a>)'
             '</span>') in single
@@ -1036,9 +1038,10 @@ def test_page_names_the_product_in_title_and_header(tmp_path, monkeypatch):
     page = rr.build_run_report(run)
     assert '<title>NexaiQ-Neurosen - Test Run - Aug 24, 2026, 10:00 AM</title>' in page
     header = page[page.index('<body>'):page.index('id="failures"')]
-    assert '<span class="product">Product: NexaiQ-Neurosen</span>' in header
-    assert header.index('Product: NexaiQ-Neurosen') < header.index('Env: <code>QA</code>')
-    assert page.count('Product: ') == 1
+    assert '<div class="fact lead"><dt>Product</dt><dd>NexaiQ-Neurosen</dd></div>' in header
+    assert header.index('<dt>Product</dt><dd>NexaiQ-Neurosen</dd>') < header.index('<dt>Env</dt><dd>QA</dd>')
+    assert page.count('<dt>Product</dt>') == 1
+    assert 'Product: ' not in page   # one product: no test card names it again
     # The product is a word the filter box matches.
     assert 'nexaiq-neurosen' in re.search(r'data-test="([^"]*)"', page).group(1)
 
@@ -1052,7 +1055,7 @@ def test_mixed_run_names_the_product_on_every_test(tmp_path):
     _add_summary_tests(run, rows, {'product': 'Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core'})
     page = rr.build_run_report(run)
     assert '<title>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core - Test Run -' in page
-    card = page[page.index('<div class="card failed"'):page.index('id="advisories"')]
+    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
     assert '<span class="product">Product: NexaiQ-Core</span>' in card
     rows_html = page[page.index('id="passed"'):]
     assert rows_html.count('<span class="product">Product: NexaiQ-Camera 2 Cloud</span>') == 2
@@ -1281,13 +1284,14 @@ def test_provenance_line_names_machine_account_and_the_chrome_that_ran_it():
                               'browser_version': '153.0.8010.36', 'browser_latest': '153.0.8010.47',
                               'git_commit': 'b8ca3f8'}}
     html = rr._render_provenance(summary, 'NexaiQ-Core')
-    for span in ('<span>Tenant: <code>vsaas-qa.example</code></span>', '<span>Machine: <code>spartan1</code></span>',
-                 '<span>Operator: <code>soterix</code></span>', '<span>Account: <code>justin</code></span>',
-                 '<span>Browser: <code>Chromium / Chrome 153.0.8010.36 (stable 153.0.8010.47 is out)</code></span>'):
+    # each fact is a label above its value, so a reader finds the box or the machine at a glance
+    for span in ('<dt>Tenant</dt><dd>vsaas-qa.example</dd>', '<dt>Machine</dt><dd>spartan1</dd>',
+                 '<dt>Operator</dt><dd>soterix</dd>', '<dt>Account</dt><dd>justin</dd>',
+                 '<dt>Browser</dt><dd>Chromium / Chrome 153.0.8010.36 <span class="note">(stable 153.0.8010.47 is out)</span></dd>'):
         assert span in html, span
     assert 'Host:' not in html
     current = {'provenance': {'browser_channel': 'chrome', 'browser_version': '1.0', 'browser_latest': '1.0'}}
-    assert '<span>Browser: <code>Chrome 1.0</code></span>' in rr._render_provenance(current, '')
+    assert '<dt>Browser</dt><dd>Chrome 1.0</dd>' in rr._render_provenance(current, '')
     assert 'Machine' not in rr._render_provenance({'provenance': {}}, '')
 
 
@@ -1319,4 +1323,59 @@ def test_the_page_opens_with_what_to_read_first():
     assert '49 tests skipped for one reason: cannot decode H.265' in html
     assert '13 of 15 collected tests did not run' in html
     assert rr._read_first_html({}) == ''
+
+
+def test_many_failures_fold_to_one_line_each_and_a_few_stay_open():
+    """More than OPEN_FAILURES_MAX failures: each card starts closed with its error's first line in the
+    summary, a group starts closed too, and the page has Expand all and Collapse all."""
+    from soterix_qa_shared.reporting import run_report as rr
+    rec = rr.TestRecord(nodeid='tests/ui/a.py::test_x[chromium]', outcome='failed', digest={})
+    rec.headline = 'AssertionError: the tile count stayed at 4\nmore lines'
+    opened = rr._render_failure(rec, Path('.'), folded=False)
+    closed = rr._render_failure(rec, Path('.'), folded=True)
+    assert opened.startswith('<details class="card failed"') and ' open>' in opened.split('\n')[0]
+    assert ' open>' not in closed.split('\n')[0]
+    assert '<div class="one-line">AssertionError: the tile count stayed at 4</div>' in closed
+    assert closed.rstrip().endswith('</details>')
+    group = rr._render_group([rec, rec], Path('.'), folded=True)
+    assert group.startswith('<details class="group">')
+    assert rr._render_group([rec, rec], Path('.'), folded=False).startswith('<details class="group" open>')
+    assert rr.OPEN_FAILURES_MAX == 3
+
+
+def test_a_grouped_test_keeps_the_history_it_had_before_it_got_its_group():
+    """'test_x[chromium]@account_views' today and 'test_x[chromium]' before are 1 test: not a new test, and its error is seen before."""
+    from soterix_qa_shared.reporting import run_report as rr
+    earlier = rr.ByTest({'tests/ui/a.py::test_x[chromium]': 'failed'})
+    now = 'tests/ui/a.py::test_x[chromium]@account_views'
+    assert now in earlier
+    assert earlier[now] == 'failed'
+    assert earlier.get(now) == 'failed'
+    assert rr.compute_deltas({now: 'failed'}, earlier) == {now: rr.DELTA_STILL_FAILING}
+    assert rr.compute_deltas({now: 'failed'}, rr.ByTest({})) == {now: rr.DELTA_NEW_TEST}
+
+
+def test_no_box_of_the_page_has_a_fixed_light_background():
+    """In dark mode the text is light, so a box with a fixed light background hid it (the 'read this first' list)."""
+    import re as _re
+
+    from soterix_qa_shared.reporting import run_report as rr
+    fixed = _re.findall(r'background:\s*#(?:f[0-9a-f]{2}|f[0-9a-f]{5}|e[0-9a-f]{5})\b', rr.PAGE_CSS, flags=_re.IGNORECASE)
+    assert fixed == []
+
+
+def test_a_title_never_shows_the_browser_or_the_xdist_group():
+    """A test with no docstring reads 'Delete user', from a grouped node id and from a title an older archive stored."""
+    from soterix_qa_shared.reporting import run_report as rr
+    assert rr.readable_title('tests/ui/admin/test_admin_users.py::TestAdminUsers::test_delete_user[chromium]@account_users') == 'Delete user'
+    assert rr.clean_title('Delete user[chromium]@account users') == 'Delete user'
+    assert rr.clean_title('Verify a saved view can be dragged to an empty tile') == 'Verify a saved view can be dragged to an empty tile'
+    assert rr.clean_title('[chromium]') == '[chromium]'   # never an empty title
+
+
+def test_the_headline_falls_back_to_the_error_that_the_summary_recorded():
+    """No captured log and no trace: the card still says why, from summary.json's error line."""
+    from soterix_qa_shared.reporting import run_report as rr
+    rec = rr.TestRecord(nodeid='tests/ui/a.py::test_x[chromium]', outcome='failed', error='AssertionError: 2 != 1')
+    assert rr.failure_headline(rec, None) == 'AssertionError: 2 != 1'
 

@@ -98,6 +98,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from soterix_qa_shared.qatouch.mapping import canonical_nodeid
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
 from soterix_qa_shared.reporting.products import (
     is_mixed,
@@ -255,6 +256,8 @@ class TestRecord:
     seen: dict | None = None
     # history_facts() over the archived runs of this target.
     history: dict = field(default_factory=dict)
+    # The error's first line as summary.json recorded it: the headline when report.html gave no log
+    error: str = ''
     # True when summary.json gave this test its outcome: a leftover failure
     # screenshot or trace then never overrides it (a test that passed on a
     # rerun kept its first attempt's trace and was listed under Failures).
@@ -301,11 +304,22 @@ def readable_title(nodeid: str, doc: str | None = None) -> str:
         text = line.strip()
         if text:
             return text
-    name = nodeid.rsplit('::', 1)[-1]
+    # without xdist's '@<group>': with it the '[param]$' rule missed, and a test with no
+    # docstring read 'Delete user[chromium]@account users' (seen 09/21/2026)
+    name = canonical_nodeid(nodeid).rsplit('::', 1)[-1]
     name = re.sub(r'\[.*\]$', '', name)
     name = re.sub(r'^test_?', '', name)
     words = name.replace('_', ' ').strip()
     return (words[:1].upper() + words[1:]) if words else nodeid
+
+
+_TITLE_TAIL_RE = re.compile(r'\[[^\]]*\](?:@[\w -]+)?$')
+
+
+def clean_title(title: str) -> str:
+    """A title as an older archive stored it, without a '[chromium]@account users' tail."""
+    cleaned = _TITLE_TAIL_RE.sub('', title).strip()
+    return cleaned or title
 
 
 def module_of(nodeid: str) -> str:
@@ -575,14 +589,36 @@ def find_previous_run(run_dir: Path) -> Path | None:
     return earlier[0] if earlier else None
 
 
+class ByTest(dict):
+    """A dict keyed by test, where a test is its node id without xdist's '@<group>' suffix.
+
+    A test that got an xdist_group mark reports as 'test_x[chromium]@account_views' from
+    then on, and as 'test_x[chromium]' in a run with no -n. Keyed on the raw text, every
+    grouped test read as a new test with no history (found 09/21/2026). Facts of an
+    earlier run go in through here, and each lookup by a node id of this run finds them.
+    """
+
+    def __init__(self, pairs: Mapping[str, str] | None = None) -> None:
+        super().__init__((canonical_nodeid(str(k)), v) for k, v in dict(pairs or {}).items())
+
+    def __contains__(self, key: object) -> bool:
+        return super().__contains__(canonical_nodeid(str(key)))
+
+    def __getitem__(self, key: str) -> str:
+        return super().__getitem__(canonical_nodeid(str(key)))
+
+    def get(self, key: str, default=None):
+        return super().get(canonical_nodeid(str(key)), default)
+
+
 def load_previous_outcomes(prev_dir: Path) -> dict[str, str]:
     """Node id -> outcome for an earlier run, from its summary "tests" when
     present, else from its report and file names (older archives)."""
     rows = summary_tests(load_summary(prev_dir))
     if rows:
-        return {str(r['nodeid']): str(r.get('outcome') or 'unknown') for r in rows}
+        return ByTest({str(r['nodeid']): str(r.get('outcome') or 'unknown') for r in rows})
     records, _unattached = collect_tests(prev_dir)
-    return {nodeid: rec.outcome for nodeid, rec in records.items()}
+    return ByTest({nodeid: rec.outcome for nodeid, rec in records.items()})
 
 
 def compute_deltas(current: Mapping[str, str],
@@ -623,7 +659,7 @@ def load_run_errors(run_dir: Path) -> dict[str, str]:
     rows = summary_tests(load_summary(run_dir))
     failed = [r for r in rows if str(r.get('outcome') or '') in FAILURE_OUTCOMES]
     if rows and all('error' in r for r in failed):
-        return {str(r['nodeid']): str(r.get('error') or '') for r in failed}
+        return ByTest({str(r['nodeid']): str(r.get('error') or '') for r in failed})
     return {nodeid: first_line(_headline(row['log']))
             for nodeid, row in load_report_results(run_dir).items()
             if row['outcome'] in FAILURE_OUTCOMES}
@@ -982,7 +1018,8 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
     for row in summary_tests(summary):
         nodeid = str(row['nodeid'])
         rec = tests.setdefault(nodeid, TestRecord(nodeid))
-        rec.title = str(row.get('title') or '')
+        rec.title = clean_title(str(row.get('title') or ''))
+        rec.error = str(row.get('error') or '')
         rec.module = str(row.get('module') or '')
         rec.case_key = str(row.get('case_key') or '')
         rec.case_title = str(row.get('case_title') or '')
@@ -1135,7 +1172,26 @@ h3.title { margin: 0; }
 .chip.seen-before { color: var(--muted); }
 .chip.flaky { color: var(--skip); background: var(--skip-bg); border-color: var(--skip); }
 .verdict { font-size: 1.1rem; font-weight: 600; margin: .25rem 0 .75rem; }
-ul.read-first { border-left: 4px solid #b00020; margin: 0 0 1rem; padding: .4rem .4rem .4rem 1.6rem; background: #fff4f4; }
+ul.read-first { border-left: 4px solid var(--fail); margin: 0 0 1rem; padding: .4rem .4rem .4rem 1.6rem; background: var(--fail-bg); }
+dl.run-facts { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 .9rem; }
+dl.run-facts .fact { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .65rem; min-width: 5.5rem; }
+dl.run-facts .fact.lead { border-left: 4px solid var(--link); }
+dl.run-facts dt { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; }
+dl.run-facts dd { margin: .05rem 0 0; font-weight: 600; color: var(--fg); word-break: break-word; }
+dl.run-facts dd .note { font-weight: 400; color: var(--skip); }
+details.card { padding: 0; }
+details.card > summary { list-style-position: outside; padding: .8rem 1.25rem; font-weight: 400; }
+details.card > summary h3 { display: inline; }
+details.card > summary .one-line { color: var(--fail); font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
+  margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+details.card[open] > summary { border-bottom: 1px solid var(--line); }
+details.card[open] > summary .one-line { display: none; }
+details.card > .card-body { padding: .25rem 1.25rem 1rem; }
+details.group > summary { font-weight: 400; }
+details.group > summary .headline { margin: .4rem 0 0; }
+.fold-tools { display: flex; gap: .5rem; margin: .25rem 0 .75rem; }
+.fold-tools button { font: inherit; padding: .2rem .7rem; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--card); color: var(--fg); cursor: pointer; }
 ul.verdict { padding-left: 1.25rem; }
 .product { font-weight: 600; color: var(--fg); }
 ul.verdict .product { font-weight: 400; color: var(--muted); margin-left: .5rem; font-size: .95rem; }
@@ -1399,19 +1455,28 @@ def failure_headline(rec: TestRecord, digest: dict | None) -> str:
     headline = _headline(rec.log)
     if not headline and digest and digest.get('errors'):
         headline = '\n'.join(digest['errors'])
-    return headline
+    return headline or rec.error
+
+
+# A run with more failures than this shows each one folded to its title, its facts and
+# the first line of its error. A run with 3 failures is read from top to bottom. A run
+# with 24 was a long scroll for each failure (Justin, 09/21/2026).
+OPEN_FAILURES_MAX = 3
 
 
 def _render_failure(rec: TestRecord, run_dir: Path, with_seen: bool = True,
-                    with_product: bool = False, links: RunLinks | None = None) -> str:
-    parts = [(f'<div class="card {escape(rec.outcome)}" id="{escape(rec.safe, quote=True)}" '
-             f'data-test="{_filter_key(rec)}">'),
-             _render_identity(rec, 'h3'),
-             _render_facts(rec, with_outcome=True, with_seen=with_seen,
-                           links=links, with_product=with_product)]
+                    with_product: bool = False, links: RunLinks | None = None,
+                    folded: bool = False) -> str:
     # build_run_report fills these in. A caller that skipped it still gets a card.
     digest = rec.digest if rec.digest is not None else failure_digest(rec, run_dir)
     headline = rec.headline or failure_headline(rec, digest)
+    one_line = (f'<div class="one-line">{escape(first_line(headline))}</div>' if headline else '')
+    parts = [(f'<details class="card {escape(rec.outcome)}" id="{escape(rec.safe, quote=True)}" '
+             f'data-test="{_filter_key(rec)}"{"" if folded else " open"}>'),
+             '<summary>' + _render_identity(rec, 'h3'),
+             _render_facts(rec, with_outcome=True, with_seen=with_seen,
+                           links=links, with_product=with_product) + one_line + '</summary>',
+             '<div class="card-body">']
     parts.append('<h4>Error</h4>')
     if headline:
         parts.append(f'<pre class="headline">{escape(headline)}</pre>')
@@ -1460,24 +1525,25 @@ def _render_failure(rec: TestRecord, run_dir: Path, with_seen: bool = True,
                 parts.append(f'<pre>python -m playwright show-trace "{escape(absolute)}"</pre>')
     else:
         parts.append('<p class="empty">No trace kept for this test.</p>')
-    parts.append('</div>')
+    parts.append('</div></details>')
     return '\n'.join(parts)
 
 
 def _render_group(group: list[TestRecord], run_dir: Path, with_product: bool = False,
-                  links: RunLinks | None = None) -> str:
+                  links: RunLinks | None = None, folded: bool = False) -> str:
     """One failure renders as its card. Several with one error signature
     share a frame that says so, with the error and its new/seen label
-    once at the top instead of on every card."""
+    once at the top instead of on every card. With `folded`, the frame and
+    its cards start closed: the frame's top line is the error they share."""
     if len(group) == 1:
-        return _render_failure(group[0], run_dir, with_product=with_product, links=links)
+        return _render_failure(group[0], run_dir, with_product=with_product, links=links, folded=folded)
     lead = group[0]
-    head = (f'<div class="group-head"><b>{len(group)} tests share this error</b>'
+    head = (f'<summary class="group-head"><b>{len(group)} tests share this error</b>'
             f'{_seen_chip(lead, links)}'
-            f'<pre class="headline">{escape(first_line(lead.headline))}</pre></div>')
+            f'<pre class="headline">{escape(first_line(lead.headline))}</pre></summary>')
     cards = '\n'.join(_render_failure(r, run_dir, with_seen=False, with_product=with_product,
-                                      links=links) for r in group)
-    return f'<div class="group">{head}\n{cards}\n</div>'
+                                      links=links, folded=True) for r in group)
+    return f'<details class="group"{"" if folded else " open"}>{head}\n{cards}\n</details>'
 
 
 def _render_row(rec: TestRecord, links: RunLinks | None = None,
@@ -1555,10 +1621,25 @@ def _render_provenance(summary: dict, product: str = '') -> str:
              ('Machine', prov.get('host')), ('Operator', prov.get('operator')),
              ('Account', prov.get('account')),
              ('Commit', prov.get('git_commit')), ('Browser', browser), ('Versions', versions))
-    spans = [f'<span class="product">Product: {escape(product)}</span>'] if product else []
-    spans += [f'<span>{label}: <code>{escape(str(value))}</code></span>'
-              for label, value in facts if value]
-    return '<div class="meta">' + ''.join(spans) + '</div>' if spans else ''
+    items = [_fact('Product', escape(product), lead=True)] if product else []
+    for label, value in facts:
+        if not value:
+            continue
+        text = escape(str(value))
+        if label == 'Browser' and ' (stable ' in text:   # the update note reads as a note, not as the version
+            head, _, tail = text.partition(' (stable ')
+            text = f'{head} <span class="note">(stable {tail}</span>'
+        items.append(_fact(label, text))
+    return ''.join(items)
+
+
+def _fact(label: str, value_html: str, lead: bool = False) -> str:
+    """One labelled fact of the run header: a small muted label above a bold value.
+
+    The header was 2 lines of 'Label: value' pairs in one colour, and a reader could not
+    find the box or the machine in it (Justin, 09/21/2026)."""
+    return (f'<div class="fact{" lead" if lead else ""}"><dt>{escape(label)}</dt>'
+            f'<dd>{value_html}</dd></div>')
 
 
 def _read_first_html(summary: Mapping[str, Any]) -> str:
@@ -1649,8 +1730,16 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
     else:
         adv_body = '<p class="empty">None.</p>'
 
-    failure_body = ('\n'.join(_render_group(g, run_dir, with_product, run_links)
-                              for g in group_failures(failures))
+    fold = len(failures) > OPEN_FAILURES_MAX
+    fold_tools = ('<div class="fold-tools">'
+                  '<button type="button" onclick="document.querySelectorAll(\'#failure-list details.card, '
+                  '#failure-list details.group\').forEach(d => d.open = true)">Expand all</button>'
+                  '<button type="button" onclick="document.querySelectorAll(\'#failure-list details.card, '
+                  '#failure-list details.group\').forEach(d => d.open = false)">Collapse all</button>'
+                  '<span class="case">Click a failure to open it.</span></div>' if fold else '')
+    failure_body = (fold_tools + '<div id="failure-list">'
+                    + '\n'.join(_render_group(g, run_dir, with_product, run_links, folded=fold)
+                                for g in group_failures(failures)) + '</div>'
                     if failures else '<p class="empty">No failures in this run.</p>')
     passed_note = ('<p class="case">The captured output of passed and skipped tests is in '
                    '<a href="log/run.log">log/run.log</a>, one section per test.</p>'
@@ -1680,13 +1769,9 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
 <body>
 <div class="brand-row">{header_logo()}<h1>Test Run - {escape(friendly_stamp(started))}</h1></div>
 {verdict_html}
-<div class="meta">
-<span>Target: <code>{escape(target)}</code></span>
-<span>Duration: {escape(duration_text(duration))}</span>
-<span>Outcome: {outcome_html(exitstatus)}</span>
-<span>Folder: <code>{escape(run_dir.name)}</code></span>
-</div>
-{_render_provenance(summary, product)}
+<dl class="run-facts">
+{_fact('Outcome', outcome_html(exitstatus), lead=True)}{_fact('Target', escape(target))}{_fact('Duration', escape(duration_text(duration)))}{_render_provenance(summary, product)}{_fact('Folder', escape(run_dir.name))}
+</dl>
 <div class="chips">{chips}</div>
 <div class="meta">{' | '.join(links)}</div>
 {compared}

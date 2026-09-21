@@ -56,6 +56,7 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
+from soterix_qa_shared.qatouch.mapping import canonical_nodeid, function_base
 from soterix_qa_shared.reporting import live as live_record
 from soterix_qa_shared.reporting import run_archive
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
@@ -315,7 +316,8 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
                 mod['unrecorded_failed'] += failed
 
         for row in rows:
-            nodeid = str(row['nodeid'])
+            # one identity for a test across runs: without xdist's '@<group>' suffix
+            nodeid = canonical_nodeid(str(row['nodeid']))
             module = str(row.get('module') or module_of(nodeid))
             outcome = str(row.get('outcome') or 'unknown')
             seconds = row['duration_s'] if isinstance(row.get('duration_s'), (int, float)) else None
@@ -348,6 +350,10 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
         for product in {run_products[run] for run in failing_runs if run in run_products}:
             watch_by_product[product] = watch_by_product.get(product, 0) + 1
     watch.sort(key=lambda w: (-(w['facts']['rate'] or 0.0), -w['facts']['failed'], w['nodeid']))
+    variants_of: dict[str, int] = {}
+    for nodeid in history:
+        variants_of[function_base(nodeid)] = variants_of.get(function_base(nodeid), 0) + 1
+    watch_groups = group_watch(watch, variants_of)
 
     # Named products first, in name order, then the "Mixed:" labels.
     product_rows = []
@@ -396,7 +402,51 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
                    'history_since': history_since,
                    'unrecorded_failing_runs': unrecorded_failing_runs},
         'products': product_rows, 'groups': groups, 'modules': module_rows, 'watch': watch,
+        'watch_groups': watch_groups,
     }
+
+
+def _param_label(nodeid: str) -> str:
+    """The part that tells 2 variants of one test apart: 'test_x[chromium-cam-7]' -> 'chromium-cam-7'."""
+    start = nodeid.find('[')
+    return nodeid[start + 1:].rstrip(']') if start >= 0 else nodeid.rsplit('::', 1)[-1]
+
+
+def group_watch(watch: list[dict], variants_of: Mapping[str, int]) -> list[dict]:
+    """The watch list as a person reads it: by module, 1 row for each test function.
+
+    The flat list had 360 rows on 09/21/2026. 255 of them were the camera suite, where
+    28 tests each run on about 10 cameras. A test with parameters is 1 row here: it
+    says how many of its variants failed, and the variants fold below it. Modules
+    come worst first, and each is a block that opens on a click.
+    """
+    by_function: dict[str, list[dict]] = {}
+    for w in watch:
+        by_function.setdefault(function_base(w['nodeid']), []).append(w)
+    rows = []
+    for base, variants in by_function.items():
+        worst = variants[0]   # `watch` is sorted worst first
+        failures = [v['facts']['last_failure'] for v in variants if v['facts']['last_failure']]
+        rows.append({
+            'base': base, 'title': worst['title'], 'module': worst['module'], 'module_name': worst['module_name'],
+            'worst': worst, 'variants': variants, 'variant_total': max(variants_of.get(base, 0), len(variants)),
+            'rate': worst['facts']['rate'] or 0.0,
+            'failed': sum(v['facts']['failed'] for v in variants),
+            'last_failure': max(failures, key=lambda b: str(b.get('started') or '')) if failures else None,
+        })
+    modules: dict[str, dict] = {}
+    for row in rows:
+        # by the module's name (the folder under tests/), not by the file: 'c2c' is 1 block, not 1 for each file
+        m = modules.setdefault(row['module_name'], {'module': row['module'], 'module_name': row['module_name'], 'rows': []})
+        m['rows'].append(row)
+    out = []
+    for m in modules.values():
+        m['rows'].sort(key=lambda r: (-r['rate'], -r['failed'], r['base']))
+        m['worst_rate'] = m['rows'][0]['rate']
+        m['always'] = sum(1 for r in m['rows'] if r['rate'] >= 1.0)
+        out.append(m)
+    out.sort(key=lambda m: (-m['worst_rate'], -len(m['rows']), m['module_name']))
+    return out
 
 
 def _module_row(modules: dict[str, dict], key: str, name: str, started: str,
@@ -583,12 +633,36 @@ def render_health(agg: dict, generated: str | None = None,
     tiles = ''.join(_tile(p, runs_dir) for p in agg['products'])
     tiles_html = (f'<div class="tiles">{tiles}</div>' if tiles
                   else '<p class="empty">No archived runs yet. Run the suite once.</p>')
-    watch_rows = [[
-        _cell(_test_cell(w)),
-        _cell(f'{escape(w["module_name"])}<div class="nodeid">{escape(w["module"])}</div>'),
-        _cell(render_strip(w['facts'], '', with_text=False, links=RunLinks(runs_dir))),
-        _rate_cell(w['facts']), _cell(_failure_link(w['facts']['last_failure'], runs_dir)),
-    ] for w in agg['watch']]
+    links = RunLinks(runs_dir)
+
+    def strip_of(w: dict) -> str:
+        return render_strip(w['facts'], '', with_text=False, links=links)
+
+    def watch_row(row: dict) -> list[str]:
+        variants = row['variants']
+        if row['variant_total'] <= 1:
+            w = variants[0]
+            return [_cell(_test_cell(w)), _cell(strip_of(w)), _rate_cell(w['facts']),
+                    _cell(_failure_link(w['facts']['last_failure'], runs_dir))]
+        items = ''.join(
+            f'<li><code>{escape(_param_label(v["nodeid"]))}</code> {strip_of(v)} '
+            f'<span class="nodeid">{_pct(v["facts"]["rate"])}</span></li>' for v in variants)
+        folded = (f'{escape(row["title"])}<div class="nodeid">{escape(row["base"])}</div>'
+                  f'<details class="runs"><summary>{len(variants)} of {row["variant_total"]} variants failed: show them</summary>'
+                  f'<ul class="variants">{items}</ul></details>')
+        return [_cell(folded), _cell(strip_of(row['worst']) + '<div class="nodeid">the worst variant</div>'),
+                _rate_cell(row['worst']['facts']), _cell(_failure_link(row['last_failure'], runs_dir))]
+
+    watch_headers = ['Test', 'Last runs', 'Flaky rate', 'Last failure']
+    watch_groups = agg.get('watch_groups') or []
+    watch_tests = sum(len(m['rows']) for m in watch_groups)
+    watch_blocks = ''.join(
+        f'<details class="watch-module"><summary><span class="name">{escape(m["module_name"])}</span> '
+        f'<span class="count">{plural(len(m["rows"]), "test", "tests")}'
+        f'{", " + str(m["always"]) + " failed in every run" if m["always"] else ""}'
+        f', worst {_pct(m["worst_rate"])}</span></summary>'
+        + _table(watch_headers, [watch_row(r) for r in m['rows']], '') + '</details>'
+        for m in watch_groups)
     # An empty table must not claim a clean window when the failures sit
     # in runs that carry no per-test records.
     unnamed = window['unrecorded_failing_runs'] if not agg['watch'] else 0
@@ -622,6 +696,18 @@ th[title] {{ text-decoration: underline dotted; cursor: help; }}
 details.runs {{ margin-top: .2rem; font-size: .85rem; }}
 details.runs summary {{ cursor: pointer; color: var(--muted); }}
 details.runs ul {{ margin: .25rem 0 0; padding-left: 1.1rem; }}
+details.watch-module {{ border: 1px solid var(--line); border-radius: 6px; margin: .4rem 0; background: var(--card); }}
+details.watch-module > summary {{ cursor: pointer; padding: .5rem .8rem; display: flex; gap: .75rem; align-items: baseline; }}
+details.watch-module > summary .name {{ font-weight: 600; }}
+details.watch-module[open] > summary {{ border-bottom: 1px solid var(--line); }}
+details.watch-module table {{ margin: 0; width: 100%; }}
+details.watch-module td:nth-child(2) {{ white-space: nowrap; }}
+details.watch-module > summary .count {{ color: var(--muted); font-size: .9rem; }}
+ul.variants {{ list-style: none; padding-left: 0; }}
+ul.variants li {{ display: flex; gap: .6rem; align-items: center; margin: .15rem 0; }}
+.watch-tools {{ margin: .4rem 0; display: flex; gap: .5rem; }}
+.watch-tools button {{ font: inherit; padding: .2rem .7rem; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--card); color: var(--fg); cursor: pointer; }}
 </style>
 </head>
 <body>
@@ -636,12 +722,16 @@ details.runs ul {{ margin: .25rem 0 0; padding-left: 1.1rem; }}
 <h2 id="modules">Modules ({len(agg['modules'])})</h2>
 {''.join(groups)}
 
-<h2 id="watch">Tests to watch ({len(agg['watch'])})</h2>
+<h2 id="watch">Tests to watch ({plural(watch_tests, "test", "tests")} in {plural(len(watch_groups), "module", "modules")})</h2>
 <p class="case">Every test that failed at least once in its last {HISTORY_RUNS}
 results. The strip shows those results, oldest left and newest right (hover a block for the run,
 click it to open that run). The flaky rate is failures / runs the test was present in. A test is
-flaky when that window holds both a pass and a failure.</p>
-{_table(['Test', 'Module', 'Last runs', 'Flaky rate', 'Last failure'], watch_rows, no_watch)}
+flaky when that window holds both a pass and a failure. The modules come worst first. Click a
+module to open it. A test that runs with parameters (a camera, a graph type) is 1 row, and its
+variants fold below it.</p>
+<div class="watch-tools"><button type="button" onclick="document.querySelectorAll('details.watch-module').forEach(d => d.open = true)">Open all</button>
+<button type="button" onclick="document.querySelectorAll('details.watch-module').forEach(d => d.open = false)">Close all</button></div>
+{watch_blocks if watch_groups else f'<p class="empty">{escape(no_watch)}</p>'}
 </body>
 </html>
 '''

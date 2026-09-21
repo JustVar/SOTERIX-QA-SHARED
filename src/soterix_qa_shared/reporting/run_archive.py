@@ -92,6 +92,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from soterix_qa_shared.qatouch.mapping import canonical_nodeid
 from soterix_qa_shared.reporting import live as live_record
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
 from soterix_qa_shared.reporting.paths import PATH_MAX, fit_name
@@ -625,6 +626,7 @@ def lookup_case(mapping: Mapping[str, dict], nodeid: str) -> dict:
     keys without theirs: a mapping keyed on the bare function still
     names the [chromium] variant pytest-playwright runs.
     """
+    nodeid = canonical_nodeid(nodeid)   # without xdist's '@<group>', which no mapping key has
     row = mapping.get(nodeid)
     if row is None:
         bare = re.sub(r'\[.*\]$', '', nodeid)
