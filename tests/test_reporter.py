@@ -641,3 +641,13 @@ def test_key_for_and_base_keyed_handle_per_project_values():
     collapsed = base_keyed({'t.py::test_a[chromium]': {'JlW1': 'K1'}, 't.py::test_a[webkit]': {'JlW1': 'K1'},
                             't.py::test_b[chromium]': {'JlW1': 'K2'}, 't.py::test_b[webkit]': {'JlW1': 'K3'}})
     assert collapsed == {'t.py::test_a': {'JlW1': 'K1'}}
+
+
+def test_a_node_id_with_an_xdist_group_finds_its_case():
+    """pytest-xdist adds '@<group>' to a grouped test's node id; the mapping is stored with no group."""
+    reporter = _reporter()
+    reporter.mapping = {'tests/ui/a.py::TestA::test_x[chromium]': 'K1', 'tests/ui/b.py::test_y': 'K2'}
+    reporter.mapping_by_base = reporter._base_index(reporter.mapping)
+    assert reporter._mapping_value('tests/ui/a.py::TestA::test_x[chromium]@account_views') == 'K1'
+    assert reporter._mapping_value('tests/ui/b.py::test_y[chromium]@account_lpr') == 'K2'
+    assert reporter._mapping_value('tests/ui/c.py::test_z[chromium]@account_lpr') is None

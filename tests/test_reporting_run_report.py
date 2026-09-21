@@ -1371,6 +1371,10 @@ def test_a_title_never_shows_the_browser_or_the_xdist_group():
     assert rr.clean_title('Delete user[chromium]@account users') == 'Delete user'
     assert rr.clean_title('Verify a saved view can be dragged to an empty tile') == 'Verify a saved view can be dragged to an empty tile'
     assert rr.clean_title('[chromium]') == '[chromium]'   # never an empty title
+    # a person's own brackets stay; pytest's tail goes, with or without a group
+    assert rr.clean_title('Verify filter by range [7 days]') == 'Verify filter by range [7 days]'
+    assert rr.clean_title('Verify filter by range [7 days][chromium-us]') == 'Verify filter by range [7 days]'
+    assert rr.clean_title('Play a camera[Thermal-14]@account_lpr') == 'Play a camera'
 
 
 def test_the_headline_falls_back_to_the_error_that_the_summary_recorded():
@@ -1401,3 +1405,27 @@ def test_the_run_header_is_a_ruled_ledger_with_no_boxes_and_no_side_accent():
     assert rr._fact('Outcome', 'Failed', lead=True, tone=rr._outcome_tone(1)).startswith('<div class="fact lead fail">')
     assert rr._outcome_tone(0) == 'pass' and rr._outcome_tone(None) == ''
 
+
+def test_the_filter_opens_a_folded_group_with_a_match_and_hides_one_with_none():
+    """In a browser: typing opens the group that holds the match, hides the group with none, and clearing shows both."""
+    sync_api = pytest.importorskip('playwright.sync_api')
+    html = ('<input id="filter" type="search"><span id="filter-count"></span>'
+            '<details class="group" id="g1"><summary>maps</summary><div data-test="maps zoom">a</div></details>'
+            '<details class="group" id="g2"><summary>views</summary><div data-test="views drag">b</div></details>'
+            '<details class="watch-module" id="g3"><summary>none inside</summary></details>'
+            '<script>' + rr.filter_script() + '</script>')
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(channel='chrome')
+        except sync_api.Error:
+            pytest.skip('no Chrome on this machine')
+        page = browser.new_page()
+        page.set_content(html)
+        page.fill('#filter', 'zoom')
+        state = page.evaluate("() => ['g1','g2','g3'].map(i => [document.getElementById(i).open, document.getElementById(i).style.display])")
+        assert state == [[True, ''], [False, 'none'], [False, '']]
+        assert page.inner_text('#filter-count') == '1 of 2 tests match'
+        page.fill('#filter', '')
+        shown = page.evaluate("() => ['g1','g2'].map(i => document.getElementById(i).style.display)")
+        assert shown == ['', '']
+        browser.close()

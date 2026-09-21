@@ -313,7 +313,11 @@ def readable_title(nodeid: str, doc: str | None = None) -> str:
     return (words[:1].upper() + words[1:]) if words else nodeid
 
 
-_TITLE_TAIL_RE = re.compile(r'\[[^\]]*\](?:@[\w -]+)?$')
+# Only what pytest adds: a parameter that starts with the browser, or any parameter with the
+# '@<group>' of pytest-xdist after it. A title such as 'Filter by range [7 days]' is a
+# person's words and stays whole.
+_TITLE_TAIL_RE = re.compile(
+    r'(?:\[(?:chromium|firefox|webkit|chrome|msedge)[^\]]*\](?:@[\w -]+)?|\[[^\]]*\]@[\w -]+)$')
 
 
 def clean_title(title: str) -> str:
@@ -1253,6 +1257,7 @@ def filter_script(noun: str = 'tests') -> str:
   if (!box) { return; }
   var items = document.querySelectorAll('[data-test]');
   var sections = document.querySelectorAll('details.section');
+  var groups = document.querySelectorAll('details.group, details.watch-module');
   box.addEventListener('input', function () {
     var q = box.value.trim().toLowerCase();
     var shown = 0;
@@ -1263,6 +1268,14 @@ def filter_script(noun: str = 'tests') -> str:
     }
     // A match hidden inside a collapsed list is no match at all.
     for (var j = 0; j < sections.length && q; j++) { sections[j].open = true; }
+    // The same for a folded group: open it when it holds a match, and hide it when it holds none.
+    for (var k = 0; k < groups.length; k++) {
+      var inside = groups[k].querySelectorAll('[data-test]');
+      var hits = 0;
+      for (var m = 0; m < inside.length; m++) { if (inside[m].style.display !== 'none') { hits++; } }
+      groups[k].style.display = (!q || hits || !inside.length) ? '' : 'none';
+      if (q && hits) { groups[k].open = true; }
+    }
     count.textContent = q ? shown + ' of ' + items.length + ' ''' + noun + ''' match' : '';
   });
 })();

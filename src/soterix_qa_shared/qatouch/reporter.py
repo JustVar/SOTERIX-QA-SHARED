@@ -43,7 +43,7 @@ from typing import Any
 import pytest
 
 from soterix_qa_shared.qatouch.layout import paths_for
-from soterix_qa_shared.qatouch.mapping import base_keyed, key_for
+from soterix_qa_shared.qatouch.mapping import base_keyed, canonical_nodeid, key_for
 from soterix_qa_shared.qatouch.results import (
     ResultSink,
     RunContext,
@@ -409,6 +409,8 @@ class QATouchReporter:
                        else product_for_nodeid(nodeid, self.default_project_key))
 
     def _mapping_value(self, nodeid: str):
+        # pytest-xdist reports a grouped test as '...[chromium]@<group>'; the mapping has no group
+        nodeid = canonical_nodeid(nodeid)
         if nodeid in self.mapping:
             return self.mapping[nodeid]
         base = nodeid.split('[')[0]
