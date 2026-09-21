@@ -1379,3 +1379,14 @@ def test_the_headline_falls_back_to_the_error_that_the_summary_recorded():
     rec = rr.TestRecord(nodeid='tests/ui/a.py::test_x[chromium]', outcome='failed', error='AssertionError: 2 != 1')
     assert rr.failure_headline(rec, None) == 'AssertionError: 2 != 1'
 
+
+def test_the_actions_list_never_shows_what_was_typed_into_a_secret_field():
+    """A fill on a password field reads value=***; a fill on a name field keeps its value."""
+    from soterix_qa_shared.reporting import run_report as rr
+    secret = rr._params_text({'params': {'selector': 'input[name="password"] >> nth=0', 'value': 'hunter2-long'}})
+    assert secret == 'selector=input[name="password"] >> nth=0 value=***'
+    typed = rr._params_text({'params': {'selector': '#pwd', 'text': 'hunter2-long'}})
+    assert 'hunter2-long' not in typed
+    plain = rr._params_text({'params': {'selector': "input[placeholder='Search by List Name']", 'value': 'AutoTest'}})
+    assert plain.endswith('value=AutoTest')
+

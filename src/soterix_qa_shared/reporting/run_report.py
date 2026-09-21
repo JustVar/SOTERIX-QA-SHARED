@@ -915,12 +915,26 @@ def _api_name(ev: dict) -> str:
     return f'{cls}.{method}' if cls or method else str(ev.get('type', '?'))
 
 
+# A selector that names a secret field: input[name="password"], [type=password], #pwd, "Passcode".
+_SECRET_FIELD_RE = re.compile(r'pass|pwd|secret|token|otp', re.I)
+_TYPED_KEYS = ('text', 'value')
+
+
 def _params_text(ev: dict) -> str:
+    """The parameters of a traced action, as one line for the actions list.
+
+    What a test typed into a secret field is masked. A trace holds the login's fill call, and
+    the page printed it: `fill selector=input[name="password"] value=<the account password>`.
+    The evidence scan masked it before it was served (found 09/21/2026). It is not printed now.
+    """
     params = ev.get('params') or {}
+    secret_field = bool(_SECRET_FIELD_RE.search(str(params.get('selector') or '')))
     bits = []
     for key in ('selector', 'url', 'text', 'value', 'key', 'expression', 'state'):
         if key in params:
             val = str(params[key]).replace('\n', ' ')
+            if secret_field and key in _TYPED_KEYS:
+                val = '***'
             bits.append(f'{key}={val[:120]}')
     return ' '.join(bits)
 
