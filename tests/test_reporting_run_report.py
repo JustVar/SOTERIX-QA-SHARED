@@ -349,6 +349,38 @@ def _make_run(tmp_path: Path, *, report: bool = True, results_json: bool = False
     return run
 
 
+def _named_template(page: str, name: str) -> str:
+    """The content of one <template> of the run page ('t0', 't-run', 't-notes', 't-slowest')."""
+    found = re.search(rf'<template id="{re.escape(name)}">(.*?)</template>', page, flags=re.DOTALL)
+    assert found, f'no template {name}'
+    return found.group(1)
+
+
+def _row_of(page: str, safe: str) -> str:
+    """The one-line row of the test with this safe name. A row holds spans only."""
+    found = re.search(rf'<div class="row"[^>]* id="{re.escape(safe)}" .*?</div>', page, flags=re.DOTALL)
+    assert found, f'no row with id {safe}'
+    return found.group(0)
+
+
+def _template_of(page: str, safe: str) -> str:
+    """The pane content of 1 test, found the way the script finds it: by the row's data-id."""
+    index = re.search(r' data-id="(\d+)"', _row_of(page, safe)).group(1)
+    return _named_template(page, f't{index}')
+
+
+def _tab(template: str, index: int) -> str:
+    """One tab section of a test's pane: 0 Error or Result, 1 Evidence, 2 History, 3 Identity."""
+    found = re.search(rf'<section data-tab-body="{index}">(.*?)</section>', template, flags=re.DOTALL)
+    assert found, f'no tab section {index}'
+    return found.group(1)
+
+
+def _outside_templates(page: str) -> str:
+    """What the browser renders when the page opens: the page without its templates."""
+    return re.sub(r'<template.*?</template>', '', page, flags=re.DOTALL)
+
+
 def test_collect_attaches_every_file_to_its_test(tmp_path):
     """Every screenshot, frame, trace, and video attaches to its test."""
     run = _make_run(tmp_path)
@@ -405,48 +437,60 @@ def test_collect_keeps_the_worse_outcome_and_lists_strays(tmp_path):
 
 
 def test_build_run_report_orders_sections_and_links_evidence(tmp_path):
-    """run.html orders failures, advisories, passed, skipped and links the evidence."""
+    """run.html opens on the failures, shows the causes before the tests, has 1 row and 1 pane
+    template for each test, and the failed test's pane links the evidence."""
     run = _make_run(tmp_path)
     page = rr.build_run_report(run)
-    # Failures first, then advisories, passed, skipped.
-    assert (page.index('id="failures"') < page.index('id="advisories"')
-            < page.index('id="passed"') < page.index('id="skipped"'))
-    assert 'Failures (1)' in page
-    # Header facts and links, the link text capitalized like the index's.
-    for fact in ('tests/ui/views', '1 min 42 s', '<a href="report.html">Raw pytest-html</a>',
-                 '<a href="../index.html">Archive Index</a>', '<a href="./">Folder</a>'):
-        assert fact in page
+    # A run with a failure opens on the Failed tab; the causes come before the list of tests.
+    assert '<body data-first="fail"' in page
+    assert page.index('id="causes"') < page.index('id="list"')
+    assert page.count('<details class="cause">') == 1
+    assert len(re.findall(r'<div class="row"[^>]* id="', page)) == 3
+    assert len(re.findall(r'<template id="t\d+">', page)) == 3
+    for key, label in (('fail', 'Failed'), ('skip', 'Skipped'), ('pass', 'Passed')):
+        assert re.search(rf'<button type="button" data-f="{key}"[^>]*>{label}<b>1</b></button>', page)
+    assert '<button type="button" data-f="all">All<b>3</b></button>' in page
+    # The run's facts and links are in the Run details pane.
+    details = _named_template(page, 't-run')
+    for fact in ('<span>Target</span><span>tests/ui/views</span>', '<span>Duration</span><span>1 min 42 s</span>',
+                 '<a href="report.html">Raw pytest-html</a>', '<a href="../index.html">Archive index</a>',
+                 '<a href="./">Files of this run</a>'):
+        assert fact in details
+    assert '<div><span>Duration</span>1 min 42 s</div>' in page   # and the duration under the verdict
     assert 'all runs' not in page
     assert 'href="../health.html"' not in page  # no health.html beside the runs
     (tmp_path / 'health.html').write_text('x', encoding='utf-8')
-    assert '<a href="../health.html">Health</a>' in rr.build_run_report(run)
-    for key, value in (('passed', '1'), ('failed', '1'), ('skipped', '1'), ('errors', '0')):
-        assert f'class="chip {key}">{key.capitalize()}: {value}</span>' in page
-    # The failure card: message, call log, actions, console, evidence.
-    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
-    assert 'Locator.click: Timeout 30000ms exceeded.' in card
-    assert 'waiting for locator' in card
+    assert '<a href="../health.html">Health page</a>' in rr.build_run_report(run)
+    # The failed test's pane: message and call log, then actions, console, evidence.
+    pane = _template_of(page, SAFE)
+    assert re.findall(r'data-tab="\d">([^<]*)<', pane) == ['Error', 'Evidence', 'History', 'Identity']
+    error, evidence = _tab(pane, 0), _tab(pane, 1)
+    assert 'Locator.click: Timeout 30000ms exceeded.' in error
+    assert 'waiting for locator' in error
+    assert 'Full traceback and captured output' in error
     for fact in ('class="failing"', 'locator.click', 'Console errors (2)', 'Uncaught TypeError'):
-        assert fact in card
-    assert f'src="screenshots/{SAFE}__FAILED.png"' in card
-    assert f'src="screenshots/{SAFE}__FAILED__mid-drag-1.png"' in card
-    assert f'<video controls preload="metadata" src="traces/{SAFE}-video.webm">' in card
-    assert f'href="traces/{SAFE}-trace.zip"' in card
-    assert 'python -m playwright show-trace "' in card
-    assert str(run / 'traces' / f'{SAFE}-trace.zip') in card.replace('&#x27;', "'")
-    assert 'Full traceback and captured output' in card
-    # Advisories carry the test and the line.
-    assert '[VIEWS] view drag: mouse drag did not consume a tile' in page
-    # Passed and skipped are collapsed lists with thumbnails. The skipped
-    # twin's mid-drag frame stays on disk and off the page: frames show
-    # on failure cards only.
-    assert '<summary>Passed (1)</summary>' in page
-    assert '<summary>Skipped (1)</summary>' in page
+        assert fact in evidence
+    assert f'src="screenshots/{SAFE}__FAILED.png"' in evidence
+    assert f'src="screenshots/{SAFE}__FAILED__mid-drag-1.png"' in evidence
+    assert f'<video controls preload="none" src="traces/{SAFE}-video.webm">' in evidence
+    assert f'href="traces/{SAFE}-trace.zip"' in evidence
+    assert 'python -m playwright show-trace "' in evidence
+    assert str(run / 'traces' / f'{SAFE}-trace.zip') in evidence.replace('&#x27;', "'")
+    # Notes carry the test and the line, in the run's Notes pane and in the test's own pane.
+    notes = _named_template(page, 't-notes')
+    assert f'<code>{TWIN_A}</code>' in notes
+    assert '[VIEWS] view drag: mouse drag did not consume a tile' in notes
+    assert '[VIEWS] view drag: mouse drag did not consume a tile' in \
+        _tab(_template_of(page, rr._safe_name(TWIN_A, 120)), 0)
+    # Each screenshot is in a template, so the page loads none until a test is opened. The
+    # skipped twin's mid-drag frame stays on disk and off the page: frames show on failures only.
+    assert _outside_templates(page).count('<img ') - page.count('class=\"brand\"') == 0
     assert page.count('<img ') - page.count('class=\"brand\"') == 3
     assert f'{rr._safe_name(TWIN_B, 120)}__SKIPPED__mid-drag-1.png' not in page
     assert 'prefers-color-scheme: dark' in page
-    # The verdict sits under the title; no previous run, so no change counts.
-    assert '<p class="verdict">1 of 3 tests failed; 1 test skipped.</p>' in page
+    # The verdict is the large line; no previous run, so no change counts.
+    assert '<p class="verdict"><em class="tone-fail">1 of 3 failed.</em> 1 cause.</p>' in page
+    assert '<p class="sub">1 passed, 1 skipped.</p>' in page
 
 
 def test_exit_outcome_reads_as_a_word():
@@ -467,12 +511,20 @@ def test_outcome_html_keeps_the_code_as_a_tooltip():
 
 
 def test_run_page_says_outcome_and_notes_in_words(tmp_path):
-    """The header reads Outcome, not Exit status, and the advisory section
-    reads Notes with its tooltip, under the anchor the health page links."""
+    """The verdict and the run's details say the outcome in words, not as an exit status, and
+    the advisories read Notes with their explanation. The link from the health page to these
+    notes has its own pin in test_reporting_run_page.py."""
     page = rr.build_run_report(_make_run(tmp_path))
-    assert '<dt>Outcome</dt><dd><span title="exit code 1">Failed</span></dd>' in page
+    assert '<em class="tone-fail">1 of 3 failed.</em>' in page
+    assert '<span>Outcome</span><span>Failed</span>' in _named_template(page, 't-run')
     assert 'Exit status' not in page
-    assert f'<h2 id="advisories" title="{rr.NOTES_TITLE}">Notes (1)</h2>' in page
+    assert '<button type="button" data-pane="t-notes">Notes (1)</button>' in page
+    notes = _named_template(page, 't-notes')
+    assert '<h3>Notes (1)</h3>' in notes
+    assert f'<p class="sub">{rr.NOTES_TITLE}</p>' in notes
+    # The test's own pane names them Notes too, with the explanation on hover.
+    assert f'<span class="lab" title="{rr.NOTES_TITLE}">Notes</span>' in \
+        _template_of(page, rr._safe_name(TWIN_A, 120))
     assert 'Advisories (' not in page
     assert '<h4>Advisories</h4>' not in page
     # The filter script names what it counts, so the index can reuse it.
@@ -481,16 +533,23 @@ def test_run_page_says_outcome_and_notes_in_words(tmp_path):
 
 
 def test_build_run_report_survives_an_empty_folder(tmp_path):
-    """An empty run folder still renders a page with zero counts."""
+    """An empty run folder still renders a page: no tests, zero counts, no causes."""
     run = tmp_path / '2026-08-24_10-00-00__all'
     run.mkdir()
     page = rr.build_run_report(run)
-    assert 'Failures (0)' in page
-    assert 'No failures in this run.' in page
-    assert '<dt>Duration</dt><dd>-</dd>' in page
-    assert '<dt>Outcome</dt><dd>-</dd>' in page
-    assert '<summary>Passed (0)</summary>' in page
-    assert 'all' in page  # the target from the folder name
+    assert '<body data-first="all"' in page
+    assert '<p class="verdict"><em class="tone-skip">No tests ran.</em></p>' in page
+    assert 'id="causes"' not in page
+    assert 'id="map"' not in page
+    assert '<div id="list"></div>' in page
+    for label in ('Failed', 'Skipped', 'Passed', 'All'):
+        assert re.search(rf'<button type="button" data-f="\w+"[^>]*>{label}<b>0</b></button>', page)
+    details = _named_template(page, 't-run')
+    assert '<span>Duration</span><span>-</span>' in details
+    assert '<span>Outcome</span><span>-</span>' in details
+    assert '<span>Target</span><span>all</span>' in details  # the target from the folder name
+    assert 'Aug 24, 2026, 10:00 AM' in page[page.index('<h1>'):page.index('</h1>')]  # and the start
+    assert 'No per-test timing in this run.' in _named_template(page, 't-slowest')
 
 
 def test_build_run_report_escapes_test_names(tmp_path):
@@ -510,9 +569,12 @@ def test_failure_card_without_trace_or_video_says_so(tmp_path):
     (run / 'traces' / f'{SAFE}-trace.zip').unlink()
     (run / 'traces' / f'{SAFE}-video.webm').unlink()
     page = rr.build_run_report(run)
-    assert 'No trace kept for this test.' in page
-    assert 'No video kept for this test.' in page
+    evidence = _tab(_template_of(page, SAFE), 1)
     assert 'show-trace' not in page
+    assert '<video' not in evidence
+    assert f'src="screenshots/{SAFE}__FAILED.png"' in evidence  # the screenshots stay
+    assert re.search(r'no trace', evidence, flags=re.IGNORECASE)
+    assert re.search(r'no video', evidence, flags=re.IGNORECASE)
 
 
 def test_headline_takes_the_first_error_block():
@@ -641,7 +703,7 @@ def _add_summary_tests(run: Path, rows: list[dict], provenance: dict | None = No
 
 
 def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
-    """run.html shows titles, cases, provenance, delta chips, and the slowest list."""
+    """run.html shows titles, cases, provenance, change labels, and the slowest list."""
     run = _make_run(tmp_path)
     _add_summary_tests(run, _summary_test_rows(), {
         'env': 'qa', 'box': 'us', 'base_url_host': 'app.example.com', 'git_commit': 'abc1234',
@@ -656,45 +718,57 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     (prev / 'run.html').write_text('x', encoding='utf-8')
     page = rr.build_run_report(run)
 
-    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
-    # Title first, QA Touch case second, node id beneath; never a renamed test.
-    assert (card.index('Verify the view opens.') < card.index('QA Touch VK1: Open a view')
-            < card.index(f'<div class="nodeid">{NODEID}</div>'))
-    assert '<span class="chip delta new-failure">New failure</span>' in card
-    assert '1 min 41 s' in card
-    assert f'href="log/{SAFE}.log"' in card
+    # The row: title, change label, duration. The pane: title first, then the module, and the
+    # QA Touch case and the node id under Identity; never a renamed test.
+    row = _row_of(page, SAFE)
+    assert '<span class="t">Verify the view opens.</span><span class="m">New failure</span>' in row
+    assert '<span class="m">1 min 41 s</span>' in row
+    pane = _template_of(page, SAFE)
+    assert '<h3>Verify the view opens.</h3><span class="sub">ui/views/test_views_basic.py</span>' in pane
+    assert '1 min 41 s' in pane[:pane.index('<h3>')]
+    identity = _tab(pane, 3)
+    assert f'<span>Node id</span><span><code>{NODEID}</code></span>' in identity
+    assert '<span>QA Touch</span><span>VK1 Open a view</span>' in identity
+    assert '<span>Phases</span><span>setup 1.2 s, call 100.0 s</span>' in identity
+    assert f'href="log/{SAFE}.log"' in _tab(pane, 1)
     # Its error was not in the previous run, and its strip reads passed then failed.
-    assert '<span class="chip delta new-error">New error</span>' in card
-    assert 'Passed 1/2' in card
-    assert 'Flaky 50%' in card
+    history = _tab(pane, 2)
+    assert '<span>Since the previous run</span><span>New failure</span>' in history
+    assert '<span>This error</span><span>New: no earlier run in the archive shows it</span>' in history
+    assert 'Passed 1/2' in history
+    assert 'Flaky 50%' in history
     assert ('class="blk passed" href="../2026-08-23_10-00-00__tests-ui-views/run.html" '
-            'title="Aug 23, 10:00 AM: Passed"') in card
-    key = re.search(r'<details class="card failed"[^>]*data-test="([^"]*)"', page).group(1)
+            'title="Aug 23, 10:00 AM: Passed"') in history
+    key = re.search(r' data-test="([^"]*)"', row).group(1)
     assert 'verify the view opens.' in key
     assert NODEID.lower() in key
     assert 'vk1' in key
     # The passed twin was fixed; the skipped twin is new.
-    assert 'chip delta fixed">Fixed<' in page
-    assert 'chip delta new-test">New test<' in page
-    assert '<h4 class="module">ui/c2c/test_cams.py (1)</h4>' in page
-    # Header provenance, the verdict, and the plain-language delta note.
-    for fact in ('<dt>Env</dt><dd>QA</dd>', '<dt>Box</dt><dd>us</dd>', 'app.example.com', 'abc1234',
-                 'Chromium / Chrome', 'Playwright 1.62.0, Pytest-Playwright 0.9.0'):
-        assert fact in page
-    # The box sits between Env and Host: the two boxes share a host.
-    assert page.index('<dt>Env</dt><dd>QA</dd>') < page.index('<dt>Box</dt><dd>us</dd>') < page.index('app.example.com')
-    assert '<p class="verdict">1 of 3 tests failed - 1 new failure, 1 fixed; 1 test skipped.</p>' in page
-    assert ('Changes since the <a href="../2026-08-23_10-00-00__tests-ui-views/run.html">'
-            'previous run of these tests (Aug 23, 10:00 AM)</a>. Each changed test carries a '
-            'label: New failure, Fixed, Still failing, or New test.') in page
+    assert '<span class="m">Fixed</span>' in _row_of(page, rr._safe_name(TWIN_A, 120))
+    assert '<span class="m">New test</span>' in _row_of(page, rr._safe_name(TWIN_B, 120))
+    assert '<div class="modrow">ui/c2c/test_cams.py</div>' in page
+    # The provenance in the Run details pane, the verdict, and the plain-language delta note.
+    details = _named_template(page, 't-run')
+    for fact in ('<span>Environment</span><span>QA</span>', '<span>Box</span><span>us</span>',
+                 '<span>Tenant</span><span>app.example.com</span>', '<span>Commit</span><span>abc1234</span>',
+                 '<span>Browser</span><span>Chromium / Chrome</span>', '<span>Playwright</span><span>1.62.0</span>',
+                 '<span>pytest-playwright</span><span>0.9.0</span>'):
+        assert fact in details
+    # The box sits between the environment and the tenant: the two boxes share a tenant host.
+    assert details.index('<span>Environment</span>') < details.index('<span>Box</span>') < details.index('<span>Tenant</span>')
+    assert '<div><span>Box</span>us</div>' in page and '<div><span>Commit</span>abc1234</div>' in page
+    assert '<p class="verdict"><em class="tone-fail">1 of 3 failed.</em> 1 cause.</p>' in page
+    assert '<p class="sub">1 passed, 1 skipped. 1 new failure, 1 fixed since the previous run.</p>' in page
+    assert re.search(r'Changes since the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html">'
+                     r'previous run of these tests</a>, <time[^>]*>Aug 23, 10:00 AM</time>\.', details)
     assert 'Change chips compare' not in page
-    # Slowest sits between advisories and passed, longest first.
-    assert page.index('id="advisories"') < page.index('id="slowest"') < page.index('id="passed"')
-    slow = page[page.index('id="slowest"'):page.index('id="passed"')]
+    # The slowest list, longest first; each of its rows opens its test.
+    slow = _named_template(page, 't-slowest')
     assert slow.index('1 min 41 s') < slow.index('7.5 s') < slow.index('0.4 s')
+    assert slow.count(' data-id="') == 3
     # The filter box and its script ship with the page.
     assert 'id="filter"' in page
-    assert "getElementById('filter')" in page
+    assert "$('#filter').addEventListener('input'" in page
 
 
 def test_build_run_report_without_a_previous_run_has_no_chips(tmp_path):
@@ -703,13 +777,16 @@ def test_build_run_report_without_a_previous_run_has_no_chips(tmp_path):
     run = _make_run(tmp_path)
     _add_summary_tests(run, _summary_test_rows())
     page = rr.build_run_report(run)
-    for label in ('new-failure', 'still-failing', 'fixed', 'new-test'):
-        assert f'chip delta {label}' not in page
-    assert 'First run of these tests - nothing to compare yet.' in page
+    for label in (rr.DELTA_NEW_FAILURE, rr.DELTA_STILL_FAILING, rr.DELTA_FIXED, rr.DELTA_NEW_TEST):
+        assert f'>{label}<' not in page
+    assert 'ince the previous run' not in page
+    assert '<p class="sub">First run of these tests - nothing to compare yet.</p>' in _named_template(page, 't-run')
     assert 'Passed 1/1' in page
     assert 'Passed 0/1' in page
     assert 'Flaky' not in page.split('<style>')[1].split('</style>')[1]
-    assert 'New error' in page
+    # The error is new to the archive: the cause says so, and the test's History tab.
+    assert '<span class="new">new</span>' in page
+    assert 'New: no earlier run in the archive shows it' in _tab(_template_of(page, SAFE), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -873,8 +950,8 @@ def test_load_run_errors_prefers_the_summary_then_the_report(tmp_path):
 
 
 def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
-    """Two failures with one signature render under 'N tests share this
-    error'; an error the previous run showed is 'Seen before' with its date."""
+    """Two failures with one signature are 1 cause with the count 2 and the words they share;
+    an error the previous run showed says since when, with a link in the test's History tab."""
     run = _make_run(tmp_path)
     twin_log = FAILED_LOG.replace('30000ms', '15000ms')
     (run / 'report.html').write_text(_report_html({
@@ -892,23 +969,29 @@ def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
         {'nodeid': NODEID, 'outcome': 'passed', 'error': None}]}), encoding='utf-8')
     (prev / 'run.html').write_text('x', encoding='utf-8')
     page = rr.build_run_report(run)
-    assert 'Failures (3)' in page
-    # 3 failures: the page is short, so the group and the single card start open
-    group = page[page.index('<details class="group" open>'):page.index('</details>\n</details>') + 20]
-    assert '<b>2 tests share this error</b>' in group
-    assert group.count('<details class="card failed"') == 2
-    assert 'Expand all' not in page
-    assert '<span class="chip delta new-error">New error</span>' in group
-    # The label sits on the group head once, not on every member card.
-    assert group.count('New error') == 1
+    assert re.search(r'<button type="button" data-f="fail" class=on>Failed<b>3</b>', page)
+    # The larger cause is first. It starts closed: 1 line for its 2 tests.
+    causes = re.findall(r'<details class="cause">.*?</details>', page, flags=re.DOTALL)
+    assert len(causes) == 2
+    group, single = causes
+    assert '<summary><b>2</b>' in group
+    assert ('<span class="msg">playwright._impl._errors.TimeoutError: Locator.click: Timeout ... exceeded.</span>'
+            in group)
+    assert '2 tests' in group
+    assert group.count('<li ') == 2
+    # The label sits on the cause once, not on every member.
+    assert group.count('<span class="new">new</span>') == 1
     # The assertion failure stands alone and was seen in the previous run.
-    single = page[page.index('<details class="card failed" id="tests-ui-c2c-test_cams.py-TestCams-test_reboot-camera-4"'):]
-    assert ('<span class="chip delta seen-before">Seen before (last on '
-            '<a href="../2026-08-23_10-00-00__tests-ui-views/run.html">Aug 23, 10:00 AM</a>)'
-            '</span>') in single
+    assert '<summary><b>1</b><span class="msg">assert 1 == 2</span>' in single
+    assert re.search(r'since <time [^>]*data-short>Aug 23, 10:00 AM</time>', single)
+    history = _tab(_template_of(page, rr._safe_name(TWIN_B, 120)), 2)
+    assert re.search(r'Seen before, last on <a href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html">'
+                     r'<time [^>]*>Aug 23, 10:00 AM</time></a>', history)
+    assert 'New: no earlier run' in _tab(_template_of(page, SAFE), 2)
     # NODEID passed before (new failure), TWIN_B failed before (still
     # failing), TWIN_A was not in the previous run (a new test, not a count).
-    assert '<p class="verdict">3 of 3 tests failed - 1 new failure, 1 still failing.</p>' in page
+    assert '<p class="verdict"><em class="tone-fail">3 of 3 failed.</em> 2 causes.</p>' in page
+    assert '<p class="sub">1 new failure, 1 still failing since the previous run.</p>' in page
 
 
 # ---------------------------------------------------------------------------
@@ -1016,12 +1099,13 @@ def test_load_history_reads_outcomes_errors_and_start_times(tmp_path):
 
 def test_build_run_report_falls_back_on_an_older_archive(tmp_path):
     """No "tests" records: titles come from the node ids, timing from
-    pytest-html, and the slowest block says why it is empty."""
+    pytest-html, and the slowest list says why it is empty."""
     run = _make_run(tmp_path)
     page = rr.build_run_report(run)
-    assert '<h3 class="title">Open</h3>' in page
-    assert 'No per-test timing in this run.' in page
-    assert '00:01:41' in page
+    assert '<span class="t">Open</span>' in _row_of(page, SAFE)
+    assert '<h3>Open</h3>' in _template_of(page, SAFE)
+    assert 'No per-test timing in this run.' in _named_template(page, 't-slowest')
+    assert '<span class="m">00:01:41</span>' in _row_of(page, SAFE)
 
 
 # ---------------------------------------------------------------------------
@@ -1029,25 +1113,28 @@ def test_build_run_report_falls_back_on_an_older_archive(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_page_names_the_product_in_title_and_header(tmp_path, monkeypatch):
-    """The provenance product leads the header and prefixes the page title.
-    One product: no per-test product line."""
+    """The provenance product leads the heading and prefixes the page title.
+    One product: no per-test product."""
     monkeypatch.delenv('QATOUCH_PROJECT_ID', raising=False)
     run = _make_run(tmp_path)
     rows = [dict(r, product='NexaiQ-Neurosen') for r in _summary_test_rows()]
     _add_summary_tests(run, rows, {'env': 'qa', 'product': 'NexaiQ-Neurosen'})
     page = rr.build_run_report(run)
     assert '<title>NexaiQ-Neurosen - Test Run - Aug 24, 2026, 10:00 AM</title>' in page
-    header = page[page.index('<body>'):page.index('id="failures"')]
-    assert '<div class="fact lead"><dt>Product</dt><dd>NexaiQ-Neurosen</dd></div>' in header
-    assert header.index('<dt>Product</dt><dd>NexaiQ-Neurosen</dd>') < header.index('<dt>Env</dt><dd>QA</dd>')
-    assert page.count('<dt>Product</dt>') == 1
-    assert 'Product: ' not in page   # one product: no test card names it again
+    assert '<h1>NexaiQ-Neurosen &middot; <time' in page
+    details = _named_template(page, 't-run')
+    assert '<span>Product</span><span>NexaiQ-Neurosen</span>' in details
+    assert details.index('<span>Product</span>') < details.index('<span>Environment</span><span>QA</span>')
+    # One product: no row and no test pane names it again.
+    assert page.count('<span>Product</span>') == 1
+    assert '<span class="m">NexaiQ-Neurosen</span>' not in page
     # The product is a word the filter box matches.
-    assert 'nexaiq-neurosen' in re.search(r'data-test="([^"]*)"', page).group(1)
+    assert 'nexaiq-neurosen' in re.search(r' data-test="([^"]*)"', page).group(1)
 
 
 def test_mixed_run_names_the_product_on_every_test(tmp_path):
-    """A "Mixed:" run has no single product, so each card and row shows its own."""
+    """A "Mixed:" run has no single product, so each test's pane names its own under Identity, a
+    row with no parameter shows it, and each row's filter key holds it."""
     run = _make_run(tmp_path)
     rows = _summary_test_rows()
     rows[0]['product'] = 'NexaiQ-Core'
@@ -1055,10 +1142,13 @@ def test_mixed_run_names_the_product_on_every_test(tmp_path):
     _add_summary_tests(run, rows, {'product': 'Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core'})
     page = rr.build_run_report(run)
     assert '<title>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core - Test Run -' in page
-    card = page[page.index('<details class="card failed"'):page.index('id="advisories"')]
-    assert '<span class="product">Product: NexaiQ-Core</span>' in card
-    rows_html = page[page.index('id="passed"'):]
-    assert rows_html.count('<span class="product">Product: NexaiQ-Camera 2 Cloud</span>') == 2
+    assert '<h1>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core &middot; ' in page
+    assert '<span>Product</span><span>NexaiQ-Core</span>' in _tab(_template_of(page, SAFE), 3)
+    assert '<span class="m">NexaiQ-Core</span>' in _row_of(page, SAFE)
+    for twin in (TWIN_A, TWIN_B):
+        safe = rr._safe_name(twin, 120)
+        assert '<span>Product</span><span>NexaiQ-Camera 2 Cloud</span>' in _tab(_template_of(page, safe), 3)
+        assert 'nexaiq-camera 2 cloud' in re.search(r' data-test="([^"]*)"', _row_of(page, safe)).group(1)
 
 
 def test_older_archive_derives_the_product_from_the_node_ids(tmp_path, monkeypatch):
@@ -1069,7 +1159,8 @@ def test_older_archive_derives_the_product_from_the_node_ids(tmp_path, monkeypat
     page = rr.build_run_report(run)
     # NODEID is a views test, the twins are c2c tests.
     assert '<title>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core - Test Run -' in page
-    assert 'Product: NexaiQ-Camera 2 Cloud</span>' in page
+    assert '<span>Product</span><span>NexaiQ-Camera 2 Cloud</span>' in \
+        _tab(_template_of(page, rr._safe_name(TWIN_A, 120)), 3)
     monkeypatch.setenv('QATOUCH_PROJECT_ID', 'P0BK')
     later = tmp_path / '2026-08-25_10-00-00__tests-ui-views'
     later.mkdir()
@@ -1134,17 +1225,19 @@ def test_history_and_delta_links_open_what_the_older_run_has(tmp_path):
         {'nodeid': NODEID, 'outcome': 'passed'}]}), encoding='utf-8')
     page = rr.build_run_report(run)
     assert '../2026-08-23_10-00-00__tests-ui-views/run.html' not in page
+    details = _named_template(page, 't-run')
     assert ('<a href="../2026-08-23_10-00-00__tests-ui-views/report.html">'
-            'Previous run of these tests</a>') in page
-    assert ('Changes since the <a href="../2026-08-23_10-00-00__tests-ui-views/report.html">'
-            'previous run of these tests (Aug 23, 10:00 AM)</a>') in page
+            'Previous run of these tests</a>') in details
+    assert re.search(r'Changes since the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
+                     r'previous run of these tests</a>, <time [^>]*>Aug 23, 10:00 AM</time>', details)
+    history = _tab(_template_of(page, SAFE), 2)
     assert ('class="blk failed" href="../2026-08-23_10-00-00__tests-ui-views/report.html" '
-            'title="Aug 23, 10:00 AM: Failed"') in page
-    assert 'class="blk passed" href="../2026-08-22_10-00-00__tests-ui-views/" ' in page
-    assert ('Seen before (last on <a href="../2026-08-23_10-00-00__tests-ui-views/report.html">'
-            'Aug 23, 10:00 AM</a>)') in page
+            'title="Aug 23, 10:00 AM: Failed"') in history
+    assert 'class="blk passed" href="../2026-08-22_10-00-00__tests-ui-views/" ' in history
+    assert re.search(r'Seen before, last on <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
+                     r'<time [^>]*>Aug 23, 10:00 AM</time></a>', history)
     # This run's own block links its run.html: the page being written.
-    assert 'href="../2026-08-24_10-00-00__tests-ui-views/run.html"' in page
+    assert 'href="../2026-08-24_10-00-00__tests-ui-views/run.html"' in history
 
 
 # ---------------------------------------------------------------------------
@@ -1206,8 +1299,12 @@ def test_cli_all_backfills_every_run_without_a_page(tmp_path, monkeypatch, capsy
     assert rr.main(['--all']) == 1
     out = capsys.readouterr().out
     assert (old / 'run.html').is_file()
-    assert '<h3 class="title">Open</h3>' not in (old / 'run.html').read_text(encoding='utf-8')
-    assert 'Passed (1)' in (old / 'run.html').read_text(encoding='utf-8')
+    # The pre-schema run's 1 passed test, read from its report.html: a green page with no cause.
+    old_page = (old / 'run.html').read_text(encoding='utf-8')
+    assert '<em class="tone-pass">All 1 passed.</em>' in old_page
+    assert '<body data-first="all"' in old_page
+    assert '<details class="cause">' not in old_page
+    assert f'<div class="row" role="button" tabindex="0" id="{SAFE}"' in old_page
     assert (done / 'run.html').read_text(encoding='utf-8') == 'already built'
     assert (runs / '2026-08-03_10-00-00__tests-ui-views' / 'run.html').is_file()
     assert not (runs / 'not-a-run' / 'run.html').exists()
@@ -1250,9 +1347,9 @@ def test_duration_text_never_raises():
 
 
 def test_compact_row_shows_short_id_and_keeps_the_full_one(tmp_path):
-    """A passed row: the short id as text, the full id clipped beside it
-    and on hover, no module fact (the heading names it), the thumbnail
-    with a readable alt and the file name on hover, no caption."""
+    """A passed test is 1 line: its title and its duration, with no picture. The full node id
+    is in the row's filter key and under Identity, quotes escaped; the thumbnail waits in the
+    Evidence tab with a readable alt and the file name on hover."""
     run = _make_run(tmp_path)
     nodeid = 'tests/ui/views/test_x.py::TestX::test_y[chromium-a "b"]'
     (run / 'screenshots').mkdir(exist_ok=True)
@@ -1262,15 +1359,20 @@ def test_compact_row_shows_short_id_and_keeps_the_full_one(tmp_path):
                               'title': 'Verify y.', 'module': 'ui/views/test_x.py',
                               'screenshots': ['screenshots/' + shot.name]}], {'env': 'qa'})
     page = rr.build_run_report(run)
-    start = page.index('<div class="row"')
-    row = page[start:page.index('</details>', start)]
+    safe = rr._safe_name(nodeid, 120)
+    row = _row_of(page, safe)
     full = 'tests/ui/views/test_x.py::TestX::test_y[chromium-a &quot;b&quot;]'
-    assert 'TestX::test_y[chromium-a &quot;b&quot;]' in row
-    assert f'<span class="sr-only"> ({full})</span>' in row
-    assert f'title="{full}"' in row
-    assert '<span>ui/views/test_x.py</span>' not in row
-    assert 'alt="Final screenshot"' in row and '<figcaption>' not in row
-    assert f'title="{shot.name}"' in row
+    assert '<span class="t">Verify y.</span>' in row
+    assert full.lower() in re.search(r' data-test="([^"]*)"', row).group(1)
+    assert '<img' not in row
+    assert '<span>ui/views/test_x.py</span>' not in row   # the module heading above the row names it
+    assert page.count('<div class="modrow">ui/views/test_x.py</div>') == 1
+    pane = _template_of(page, safe)
+    assert f'<span>Node id</span><span><code>{full}</code></span>' in _tab(pane, 3)
+    assert 'a "b"' not in page   # never raw: a quote would end the row's attribute
+    evidence = _tab(pane, 1)
+    assert 'alt="Final screenshot"' in evidence
+    assert f'title="{shot.name}"' in evidence
 
 
 def test_provenance_line_names_machine_account_and_the_chrome_that_ran_it():

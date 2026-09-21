@@ -263,6 +263,9 @@ class TestRecord:
     # rerun kept its first attempt's trace and was listed under Failures).
     recorded: bool = False
     reruns: int = 0
+    # Why a skipped test was skipped, and the seconds of setup, call and teardown (summary.json).
+    reason: str = ''
+    phases: dict = field(default_factory=dict)
 
     @property
     def safe(self) -> str:
@@ -1050,6 +1053,8 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
             rec.outcome = outcome
         rec.recorded = bool(outcome)
         rec.reruns = int(row.get('reruns') or 0)
+        rec.reason = str(row.get('reason') or '')
+        rec.phases = dict(row.get('phases') or {}) if isinstance(row.get('phases'), dict) else {}
     for nodeid, row in load_report_results(run_dir).items():
         rec = tests.setdefault(nodeid, TestRecord(nodeid))
         rec.duration, rec.log = row['duration'], row['log']
@@ -1715,7 +1720,20 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
     and a failure card whose digest build_run_report did not fill.
     `previous` is the run the change labels were computed against
     ({'name', 'started'}), when there is one. `product` is the run's
-    product label: one name, or "Mixed: A, B", or ''."""
+    product label: one name, or "Mixed: A, B", or ''.
+
+    The page is run_page.render_run_page since 09/21/2026: the verdict, the causes and
+    the map, then 1 test in a side pane. `verdict` is not used by it: the page counts
+    the records it shows. render_run_report_classic is the page before it."""
+    from soterix_qa_shared.reporting.run_page import render_run_page
+    return render_run_page(run_dir, summary, tests, unattached, previous=previous, product=product)
+
+
+def render_run_report_classic(run_dir: Path, summary: dict, tests: dict[str, TestRecord],
+                              unattached: list[str], previous: Mapping | None = None,
+                              verdict: str = '', product: str = '') -> str:
+    """The run page as it was until 09/21/2026: each failure as a card, in one long column.
+    Kept for its pins, which hold the rendering helpers that the health page shares."""
     counts = summary.get('counts') if isinstance(summary.get('counts'), dict) else {}
     target = ' '.join(str(t) for t in (summary.get('target') or [])) or run_dir.name.partition('__')[2]
     started = summary.get('started') or run_dir.name.partition('__')[0].replace('_', ' ')

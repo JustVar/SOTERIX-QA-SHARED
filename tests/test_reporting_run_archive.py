@@ -283,8 +283,10 @@ def test_summary_shape():
                             'exitstatus', 'counts', 'target', 'markexpr',
                             'keyword', 'report_file', 'advisories', 'tests',
                             'provenance', 'collected', 'not_run', 'not_run_count',
-                            'one_cause', 'one_skip_reason'}
-    assert summary['schema_version'] == 5
+                            'one_cause', 'one_skip_reason', 'utc_offset'}
+    assert summary['schema_version'] == 6
+    # The offset of this machine at the start, or '' when the platform cannot place the time.
+    assert summary['utc_offset'] == '' or re.match(r'^[+-]\d{2}:\d{2}$', summary['utc_offset'])
     assert (summary['collected'], summary['not_run'], summary['not_run_count']) == (None, [], 0)
     assert summary['tests'] == []
     assert summary['provenance'] == {}
@@ -616,7 +618,8 @@ def test_archive_writes_the_run_report(tmp_path, monkeypatch):
     page = (dest / 'run.html').read_text(encoding='utf-8')
     assert (dest / 'summary.json').is_file()
     assert (dest / 'advisories.txt').is_file()
-    assert 'Failures (1)' in page
+    assert '<em class="tone-fail">1 of 1 failed.</em>' in page
+    assert page.count('<details class="cause">') == 1
     assert 'screenshots/t-x.py-test_a-chromium__FAILED.png' in page
     assert '[LPR] play_camera: drag landed nothing' in page
 
@@ -1099,8 +1102,9 @@ class TestTestLog:
         page = (dest / 'run.html').read_text(encoding='utf-8')
         assert 'href="log/t-x.py-test_b-chromium.log"' in page
         assert 'href="log/t-x.py-test_a-chromium.log"' not in page
-        assert 'href="log/run.log"' in page
-        assert 'The captured output of passed and skipped tests is in' in page
+        assert '<a href="log/run.log">run.log</a>' in page
+        # A passed test has no log file of its own, so the page says where its output is.
+        assert 'captured output of passed and skipped tests is in' in page
 
     def test_archive_writes_run_log_without_a_session_log(self, tmp_path, monkeypatch):
         """No live run.log (the handler never attached) still yields a

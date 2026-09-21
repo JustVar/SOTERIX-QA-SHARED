@@ -166,9 +166,12 @@ def configure(root):
 # 2: adds "tests" (per-test records) and "provenance".
 # 3: each test record carries "error" (the failure's first error line,
 #    None when it did not fail). "log_file" is set for failures only.
+# 6: "utc_offset" ('+00:00', '-05:00'): the offset of the machine that ran the tests, at the
+#    start. "started" and "ended" are that machine's own time with no zone, so a page could
+#    not show a box run (UTC) and a laptop run (Central) on one clock.
 # 4: each test record carries "product" (the name, see plugins/products)
 #    and provenance carries the run's "product".
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 # 5: adds collected / not_run / not_run_count / one_cause / one_skip_reason, and per test
 # reruns, rerun_error, teardown_error, crashed when they happened.
 NOT_RUN_LISTED = 500   # ids listed; not_run_count holds the true number
@@ -954,6 +957,7 @@ def _build_summary(*, started: float, ended: float, exitstatus: int | None,
         'schema_version': SCHEMA_VERSION,
         'started': datetime.fromtimestamp(started).isoformat(timespec='seconds'),  # noqa: DTZ006 - local-time display of a run timestamp; tz would shift the shown time
         'ended': datetime.fromtimestamp(ended).isoformat(timespec='seconds'),  # noqa: DTZ006 - local-time display of a run timestamp; tz would shift the shown time
+        'utc_offset': _utc_offset(started),
         'duration_s': round(ended - started, 1),
         'exitstatus': exitstatus,
         'counts': {key: int(counts.get(key, 0))
@@ -971,6 +975,19 @@ def _build_summary(*, started: float, ended: float, exitstatus: int | None,
         'one_skip_reason': one_skip_reason(tests),
         'tests': [dict(t, phases=dict(t.get('phases') or {})) for t in tests],
     }
+
+
+def _utc_offset(epoch: float) -> str:
+    """This machine's offset from UTC at that moment, as '+05:30'."""
+    import time
+    try:
+        seconds = time.localtime(epoch).tm_gmtoff or 0
+    # a time that the platform's clock cannot place (Windows refuses one near 1970) has no offset to record
+    except (OSError, OverflowError, ValueError):
+        return ''
+    sign = '-' if seconds < 0 else '+'
+    hours, minutes = divmod(abs(seconds) // 60, 60)
+    return f'{sign}{hours:02d}:{minutes:02d}'
 
 
 def _select_prunable(names: list[str], keep: int = KEEP_RUNS,

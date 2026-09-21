@@ -149,7 +149,8 @@ on zero collected, but reports nothing when a suite only shrinks.
 | `jira.client` | Creates an issue, or describes the one it would create. |
 | `jira.fields` | Maps test data onto a project's custom fields. |
 | `reporting.run_archive` | The pytest plugin that copies the evidence of each run into its own folder and builds the archive index. |
-| `reporting.run_report` | Builds `run.html` for one archived run: the verdict, the failures first, the history of each test. |
+| `reporting.run_report` | Collects the facts of one archived run for its `run.html`: outcomes, errors, traces, the history of each test. |
+| `reporting.run_page` | Renders `run.html` in 3 levels: the verdict, the causes and a map of the run, then 1 test in a side pane. A consumer names the map's columns with `configure_axis`. |
 | `reporting.health` | Builds the health page from the archived runs. |
 | `reporting.media` | The pytest plugin that saves one labeled screenshot for each UI test. |
 | `reporting.live` | The record of a run in progress, and the estimate of the time that is left. |
