@@ -1187,11 +1187,21 @@ h3.title { margin: 0; }
 .chip.flaky { color: var(--skip); background: var(--skip-bg); border-color: var(--skip); }
 .verdict { font-size: 1.1rem; font-weight: 600; margin: .25rem 0 .75rem; }
 ul.read-first { border-left: 4px solid var(--fail); margin: 0 0 1rem; padding: .4rem .4rem .4rem 1.6rem; background: var(--fail-bg); }
-dl.run-facts { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 .9rem; }
-dl.run-facts .fact { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .65rem; min-width: 5.5rem; }
-dl.run-facts .fact.lead { border-left: 4px solid var(--link); }
-dl.run-facts dt { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; }
-dl.run-facts dd { margin: .05rem 0 0; font-weight: 600; color: var(--fg); word-break: break-word; }
+/* The run header is a ruled ledger: 1 heavy rule above, hairlines between the facts, no boxes and no
+   side accents (Justin, 09/21/2026). The band clips the hairline of the first fact of each row. */
+.ledger { overflow: hidden; border-top: 2px solid var(--fg); border-bottom: 1px solid var(--line); margin: .6rem 0 1rem; }
+dl.run-facts { display: flex; flex-wrap: wrap; row-gap: .7rem; margin: .6rem 0 .6rem calc(-1.1rem - 1px); padding: 0; }
+dl.run-facts .fact { padding: 0 1.1rem; border-left: 1px solid var(--line); }
+dl.run-facts dt { font-size: .66rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 0; }
+dl.run-facts dd { margin: .1rem 0 0; font-weight: 600; color: var(--fg); word-break: break-word;
+  font-variant-numeric: tabular-nums; }
+dl.run-facts .fact.lead dd { font-weight: 700; }
+dl.run-facts .fact.pass dd, dl.run-facts .fact.fail dd { display: flex; align-items: center; gap: .4rem; }
+dl.run-facts .fact.pass dd::before, dl.run-facts .fact.fail dd::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; }
+dl.run-facts .fact.pass dd { color: var(--pass); }
+dl.run-facts .fact.pass dd::before { background: var(--pass); }
+dl.run-facts .fact.fail dd { color: var(--fail); }
+dl.run-facts .fact.fail dd::before { background: var(--fail); }
 dl.run-facts dd .note { font-weight: 400; color: var(--skip); }
 details.card { padding: 0; }
 details.card > summary { list-style-position: outside; padding: .8rem 1.25rem; font-weight: 400; }
@@ -1647,13 +1657,20 @@ def _render_provenance(summary: dict, product: str = '') -> str:
     return ''.join(items)
 
 
-def _fact(label: str, value_html: str, lead: bool = False) -> str:
+def _fact(label: str, value_html: str, lead: bool = False, tone: str = '') -> str:
     """One labelled fact of the run header: a small muted label above a bold value.
 
     The header was 2 lines of 'Label: value' pairs in one colour, and a reader could not
-    find the box or the machine in it (Justin, 09/21/2026)."""
-    return (f'<div class="fact{" lead" if lead else ""}"><dt>{escape(label)}</dt>'
-            f'<dd>{value_html}</dd></div>')
+    find the box or the machine in it (Justin, 09/21/2026). `tone` is 'pass' or 'fail'
+    for the outcome: a coloured word with a dot before it."""
+    classes = 'fact' + (' lead' if lead else '') + (f' {tone}' if tone else '')
+    return f'<div class="{classes}"><dt>{escape(label)}</dt><dd>{value_html}</dd></div>'
+
+
+def _outcome_tone(exitstatus: object) -> str:
+    if exitstatus is None:
+        return ''
+    return 'pass' if exitstatus == 0 else 'fail'
 
 
 def _read_first_html(summary: Mapping[str, Any]) -> str:
@@ -1783,9 +1800,9 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
 <body>
 <div class="brand-row">{header_logo()}<h1>Test Run - {escape(friendly_stamp(started))}</h1></div>
 {verdict_html}
-<dl class="run-facts">
-{_fact('Outcome', outcome_html(exitstatus), lead=True)}{_fact('Target', escape(target))}{_fact('Duration', escape(duration_text(duration)))}{_render_provenance(summary, product)}{_fact('Folder', escape(run_dir.name))}
-</dl>
+<div class="ledger"><dl class="run-facts">
+{_fact('Outcome', outcome_html(exitstatus), lead=True, tone=_outcome_tone(exitstatus))}{_fact('Target', escape(target))}{_fact('Duration', escape(duration_text(duration)))}{_render_provenance(summary, product)}{_fact('Folder', escape(run_dir.name))}
+</dl></div>
 <div class="chips">{chips}</div>
 <div class="meta">{' | '.join(links)}</div>
 {compared}

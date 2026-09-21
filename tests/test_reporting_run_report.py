@@ -1390,3 +1390,14 @@ def test_the_actions_list_never_shows_what_was_typed_into_a_secret_field():
     plain = rr._params_text({'params': {'selector': "input[placeholder='Search by List Name']", 'value': 'AutoTest'}})
     assert plain.endswith('value=AutoTest')
 
+
+def test_the_run_header_is_a_ruled_ledger_with_no_boxes_and_no_side_accent():
+    """One band with hairlines between the facts. The outcome is a coloured word with a dot, by its exit code."""
+    from soterix_qa_shared.reporting import run_report as rr
+    facts_css = '\n'.join(line for line in rr.PAGE_CSS.splitlines() if 'run-facts' in line or line.startswith('.ledger'))
+    assert '.ledger {' in facts_css
+    assert 'border-radius: 6px' not in facts_css and 'background: var(--card)' not in facts_css
+    assert 'border-left: 4px' not in facts_css
+    assert rr._fact('Outcome', 'Failed', lead=True, tone=rr._outcome_tone(1)).startswith('<div class="fact lead fail">')
+    assert rr._outcome_tone(0) == 'pass' and rr._outcome_tone(None) == ''
+

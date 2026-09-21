@@ -613,3 +613,35 @@ def test_a_parametrized_test_is_one_row_and_its_variants_fold_below_it():
     assert watch.count('<details class="watch-module">') == 2
     assert 'Open all' in watch
 
+
+def _boxed(name: str, box: str, tests: list, failed: int = 0) -> dict:
+    run = _run(name, {'passed': len(tests) - failed, 'failed': failed}, tests=tests, exitstatus=1 if failed else 0)
+    run['summary']['provenance'] = {'box': box}
+    return run
+
+
+def test_a_test_that_fails_on_one_box_says_which_box():
+    """us fails 2 of 2 and india 0 of 2: pooled that is 50%, and the row now says 'fails only on us'."""
+    runs = [_boxed('2026-09-21_10-00-00__views', 'us', [_row(A, 'failed')], failed=1),
+            _boxed('2026-09-21_09-00-00__views', 'india', [_row(A, 'passed')]),
+            _boxed('2026-09-20_10-00-00__views', 'us', [_row(A, 'failed')], failed=1),
+            _boxed('2026-09-20_09-00-00__views', 'india', [_row(A, 'passed')])]
+    agg = hs.aggregate(runs, 20)
+    w = agg['watch'][0]
+    assert w['boxes'] == {'india': {'failed': 0, 'runs': 2}, 'us': {'failed': 2, 'runs': 2}}
+    assert hs.boxes_line(w['boxes']) == 'fails only on us: india 0 of 2, us 2 of 2'
+    views = next(m for m in agg['modules'] if m['module'] == 'views')
+    assert {b: t['rate'] for b, t in views['by_box'].items()} == {'india': 1.0, 'us': 0.0}
+    page = hs.render_health(agg, generated='2026-09-21T12:00:00')
+    assert '<div class="by-box">fails only on us: india 0 of 2, us 2 of 2</div>' in page
+    assert 'india 100% &middot; us 0%' in page
+
+
+def test_the_box_line_stays_away_when_it_has_nothing_to_say():
+    """1 box, or no recorded box: no line. 2 boxes that both fail: the counts, with no 'only'."""
+    assert hs.boxes_line({}) == ''
+    assert hs.boxes_line({'india': {'failed': 1, 'runs': 3}}) == ''
+    both = {'india': {'failed': 1, 'runs': 3}, 'us': {'failed': 3, 'runs': 3}}
+    assert hs.boxes_line(both) == 'failed runs by box: india 1 of 3, us 3 of 3'
+    assert hs.box_facts([{'outcome': 'failed', 'box': ''}, {'outcome': 'skipped', 'box': 'us'}]) == {}
+
