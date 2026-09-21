@@ -7,7 +7,10 @@ in a real Chrome. The browser pins skip on a machine with no Playwright or no Ch
 """
 from __future__ import annotations
 
+import json
 import re
+from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -70,6 +73,11 @@ def _outside_templates(page: str) -> str:
     return re.sub(r'<template.*?</template>', '', page, flags=re.DOTALL)
 
 
+def _main_of(page: str) -> str:
+    """The left part of the page: the verdict, the facts, the causes, the map and the rows. The pane is not in it."""
+    return page[page.index('<main>'):page.index('</main>')]
+
+
 # ---------------------------------------------------------------------------
 # Time
 # ---------------------------------------------------------------------------
@@ -86,10 +94,60 @@ def test_utc_iso_converts_with_the_recorded_offset(naive, offset):
     assert rp.utc_iso(naive, offset) == '2026-09-21T10:25:54Z'
 
 
-def test_utc_iso_without_an_offset_uses_this_machines():
-    """An older run recorded no offset: the stamp is still a UTC time, by the offset of the machine that builds the page."""
-    assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', rp.utc_iso('2026-09-21T10:25:54'))
-    assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', rp.utc_iso('2026-09-21T10:25:54', 'odd'))
+def _utc_by_this_machine(naive: str) -> str:
+    """The UTC stamp of a time with no zone, by the zone of this machine on that date. The test computes it
+    with datetime alone, so the pin holds on a machine in each zone."""
+    return datetime.fromisoformat(naive).astimezone().astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+@pytest.mark.parametrize('naive', ['2026-09-21T10:25:54', '2026-01-15T10:25:54'])
+def test_utc_iso_without_an_offset_uses_this_machines(naive):
+    """An older run recorded no offset: the stamp is by the offset of the machine that builds the page, on that
+    date (a summer date and a winter date). An offset that is no offset reads the same."""
+    here = _utc_by_this_machine(naive)
+    assert rp.utc_iso(naive) == here
+    assert rp.utc_iso(naive, '') == here
+    assert rp.utc_iso(naive, 'odd') == here
+
+
+STAMP_RE = r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z'
+
+
+@pytest.mark.parametrize(('naive', 'offset', 'expected'), [
+    # A year at the edge of the calendar: the conversion to UTC leaves the calendar.
+    ('0001-01-01T00:00:00', '+05:30', ''),
+    ('9999-12-31T23:59:59', '-05:00', ''),
+    ('0001-01-01T00:00:00', '-05:00', '0001-01-01T05:00:00Z'),
+    # With an offset, a time near 1970 needs no clock of the platform.
+    ('1970-01-01T00:00:00', '+00:00', '1970-01-01T00:00:00Z'),
+    # With no offset the platform places the time. Windows refuses these; Linux places some of them.
+    ('0001-01-01T00:00:00', None, None),
+    ('9999-12-31T23:59:59', None, None),
+    ('1970-01-01T00:00:00', None, None),
+    ('1969-12-31T20:00:00', None, None),
+    # 'Z' and 'UTC' are +00:00.
+    ('2026-09-21T10:25:54', 'Z', '2026-09-21T10:25:54Z'),
+    ('2026-09-21T10:25:54', 'z', '2026-09-21T10:25:54Z'),
+    ('2026-09-21T10:25:54', 'UTC', '2026-09-21T10:25:54Z'),
+    ('2026-09-21T10:25:54', ' utc ', '2026-09-21T10:25:54Z'),
+    # The widest offsets that are in range.
+    ('2026-09-21T10:25:54', '+23:59', '2026-09-20T10:26:54Z'),
+    ('2026-09-21T10:25:54', '-2359', '2026-09-22T10:24:54Z'),
+])
+def test_utc_iso_never_raises(naive, offset, expected):
+    """A time that cannot be placed gives '', never an error: an error here cost the run its page.
+    `expected` None: the answer is the platform's, so the pin is that the call returns '' or a stamp."""
+    stamp = rp.utc_iso(naive, offset)
+    if expected is None:
+        assert stamp == '' or re.fullmatch(STAMP_RE, stamp)
+    else:
+        assert stamp == expected
+
+
+@pytest.mark.parametrize('offset', ['+24:00', '+99:99', '+00:99', '-24:00', '+2400', '+1:00', 5, ['+05:30']])
+def test_utc_iso_reads_an_offset_out_of_range_as_no_offset(offset):
+    """An offset that no zone has does not raise. It reads as no offset: the stamp is by this machine's zone."""
+    assert rp.utc_iso('2026-09-21T10:25:54', offset) == _utc_by_this_machine('2026-09-21T10:25:54')
 
 
 @pytest.mark.parametrize('text', ['yesterday', '', None, '2026-13-01T00:00:00'])
@@ -226,6 +284,69 @@ def test_find_axis_falls_back_to_the_parameter_text_when_the_provider_fails(answ
     assert [c['label'] for c in axis['columns']] == ['5b43', '5b41', '5b42']
 
 
+def test_find_axis_is_none_when_a_cell_repeats():
+    """A run on 2 browsers has 2 records for 1 (function, parameter) cell, and the map has 1 square for it.
+    No map: the rows show each record."""
+    records = _grid(('test_a', 'test_b'), CAMERAS[:2])
+    assert rp.find_axis(records, {}) is not None
+    twice = [*records, _rec(f'tests/ui/c2c/test_c.py::test_a[{CAMERAS[0]}-firefox]', 'failed')]
+    assert rp.find_axis(twice, {}) is None
+    # The same cell with an xdist group is the same cell.
+    grouped = [*records, _rec(f'tests/ui/c2c/test_c.py::test_b[{CAMERAS[1]}-chromium]@account_c2c')]
+    assert rp.find_axis(grouped, {}) is None
+
+
+@pytest.mark.parametrize('source', ['summary', 'provider'])
+def test_find_axis_copies_only_the_names_of_a_column(source):
+    """The data of a column gives its group, label and title. A 'param' key in it cannot move the
+    column to a different parameter, and no other key comes on the column."""
+    named = {'noun': 'camera', 'columns': {CAMERAS[0]: {
+        'param': CAMERAS[1], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 10.2.0.129', 'rows': 'x', 'ip': '10.2.0.129'}}}
+    if source == 'provider':
+        rp.configure_axis(lambda params: named)
+    axis = rp.find_axis(_grid(), {'axis': named} if source == 'summary' else {})
+    assert sorted(c['param'] for c in axis['columns']) == sorted(CAMERAS)
+    column = next(c for c in axis['columns'] if c['label'] == '.129')
+    assert column == {'param': CAMERAS[0], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 10.2.0.129'}
+    # The cell of each row under that column is still the record of the first camera.
+    position = axis['columns'].index(column)
+    assert axis['rows'][0][2][axis['columns'][position]['param']].nodeid.endswith(f'[{CAMERAS[0]}-chromium]')
+
+
+def test_find_axis_names_are_text_and_an_empty_name_keeps_the_fallback():
+    """A name that is a number shows as text. An empty name, or None, keeps the name from the parameter text."""
+    summary = {'axis': {'columns': {CAMERAS[0]: {'group': 7, 'label': '', 'title': None}}}}
+    column = next(c for c in rp.find_axis(_grid(), summary)['columns'] if c['param'] == CAMERAS[0])
+    assert column == {'param': CAMERAS[0], 'group': '7', 'label': '5b41', 'title': CAMERAS[0]}
+
+
+@pytest.mark.parametrize('noun', [5, ['camera'], {'a': 1}, '', None, True])
+def test_find_axis_noun_that_is_no_text_is_variant(noun):
+    """The noun goes into sentences of the page ('2 cameras'). A noun that is no text falls back to 'variant'."""
+    assert rp.find_axis(_grid(), {'axis': {'noun': noun, 'columns': {}}})['noun'] == 'variant'
+    assert rp.find_axis(_grid(), {'axis': {'noun': 'camera', 'columns': {}}})['noun'] == 'camera'
+
+
+@pytest.mark.parametrize(('param', 'group', 'label'), [
+    ('dc-5v-1-q300c5b44', 'DC-5V-1', '5b44'),   # a serial: people name it by its end
+    ('detect-person', 'DETECT', 'person'),   # a word stays whole
+    ('detect-thermalcamera', 'DETECT', 'thermalcamera'),   # a long word too: it has no digit
+    ('lab-cam12345', 'LAB', 'cam12345'),   # 8 characters with digits: short, so whole
+    ('lab-cam123456', 'LAB', '3456'),   # 9 characters with a digit: cut to the end
+    ('person', '', 'person'),   # 1 part: no group
+])
+def test_fallback_label_keeps_a_word_and_cuts_a_serial(param, group, label):
+    """With no names given, the label is the last part of the parameter. Only a long part with a digit is cut to its last 4 characters."""
+    assert rp._fallback_column(param) == {'group': group, 'label': label, 'title': param}
+
+
+def test_find_axis_labels_a_word_parameter_whole():
+    """The map of a suite that runs each test for 'person' and 'vehicle' heads its columns with those words."""
+    records = [_rec(f'tests/ui/search/test_s.py::{fn}[chromium-detect-{kind}]')
+               for fn in ('test_a', 'test_b') for kind in ('person', 'vehicle')]
+    assert [c['label'] for c in rp.find_axis(records, {})['columns']] == ['person', 'vehicle']
+
+
 def test_find_axis_is_none_past_the_widest_map():
     """More parameters than MAP_MAX_COLUMNS: no map, the rows alone show the run."""
     cameras = [f'cam-{n}' for n in range(rp.MAP_MAX_COLUMNS + 1)]
@@ -315,16 +436,20 @@ def test_tests_that_did_not_run_are_said_under_the_verdict(tmp_path):
 
 
 def test_an_interrupted_run_says_so_beside_the_verdict(tmp_path):
-    """Exit status 2: the counts alone do not say that the run was cut, so an Outcome fact leads the facts. A failed run (1) needs none."""
+    """Exit status 2: the counts alone do not say that the run was cut, so an Outcome fact leads the facts. A failed
+    run (1) needs none. Run details give the outcome and the exit code of each run."""
     records = [_rec('tests/a.py::test_a[chromium]')]
     word = rr.EXIT_OUTCOMES[2]
     assert word == 'Interrupted'
     cut = _render(tmp_path, records, {'exitstatus': 2})
     assert f'<div class="facts"><div><span>Outcome</span><b class="tone-fail">{word}</b></div>' in cut
-    assert f'<span>Outcome</span><span>{word}</span>' in _named_template(cut, 't-run')
+    assert f'<span>Outcome</span><span>{word}</span><span>Exit code</span><span>2</span>' in _named_template(cut, 't-run')
     failed = _render(tmp_path / 'other', records, {'exitstatus': 1})
-    assert '<span>Outcome</span>' not in _outside_templates(failed)
-    assert '<span>Outcome</span><span>Failed</span>' in _named_template(failed, 't-run')
+    # The pane at rest holds Run details, so the search is in the left part of the page only.
+    assert '<span>Outcome</span>' not in _main_of(failed)
+    assert '<span>Outcome</span><span>Failed</span><span>Exit code</span><span>1</span>' in _named_template(failed, 't-run')
+    # A run with no exit status has no Exit code row.
+    assert 'Exit code' not in _render(tmp_path / 'none', records, {})
 
 
 def test_text_from_the_run_is_escaped_everywhere(tmp_path):
@@ -426,13 +551,237 @@ def test_an_unknown_outcome_gets_its_own_tab(tmp_path):
     assert 'data-f="unkn"' not in _render(tmp_path / 'other', [_rec('tests/a.py::test_a[chromium]')])
 
 
+class _Tags(HTMLParser):
+    """Each start tag with its attributes, and each end tag, as a browser's parser finds them. The parser
+    reads the content of a <template> as tags too, and the content of <script> and <style> as text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.starts: list[tuple[str, dict]] = []
+        self.ends: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        self.starts.append((tag, dict(attrs)))
+
+    def handle_endtag(self, tag):
+        self.ends.append(tag)
+
+
+def _tags_of(page: str) -> _Tags:
+    tags = _Tags()
+    tags.feed(page)
+    tags.close()
+    return tags
+
+
+# Text that closes an attribute, a template and the script, and then starts markup of its own.
+BREAKOUT = ('x" onmouseover="alert({0})" y=\'z\' onfocus=\'alert({0})\' </template></script></aside>'
+            '<img src=x onerror=alert({0})><script>alert({0})</script>')
+
+
+def test_text_with_quotes_and_closing_tags_breaks_no_attribute_and_no_template(tmp_path):
+    """A title, an error, a skip reason, a case title, a module, a product, a note, an axis name and a file
+    name that hold quotes, '</template>' and '</script>': a parser finds only the tags that the page wrote.
+    No attribute of a tag ends early (no tag gets an 'on...' attribute), the only <script> is the page's own,
+    each <img> is the brand logo, and each <template> that opens closes: 1 for each test and 3 for the run."""
+    failed = _rec(f'tests/ui/c2c/test_c.py::test_a[{CAMERAS[0]}-chromium]', 'failed',
+                  title=BREAKOUT.format(1), headline=BREAKOUT.format(2), signature='sig', error=BREAKOUT.format(3),
+                  log=BREAKOUT.format(4), advisories=[BREAKOUT.format(5)], case_key='K"1', case_title=BREAKOUT.format(6),
+                  module=BREAKOUT.format(7), product=BREAKOUT.format(8), delta=BREAKOUT.format(9), digest={},
+                  seen={'run': '2026-09-20_10-00-00__' + BREAKOUT.format(10), 'started': BREAKOUT.format(11)},
+                  history=rr.history_facts([{'run': BREAKOUT.format(12), 'started': '2026-09-20T10:00:00',
+                                             'utc_offset': '+00:00', 'outcome': BREAKOUT.format(13)}]))
+    skipped = _rec(f'tests/ui/c2c/test_c.py::test_a[{CAMERAS[1]}-chromium]', 'skipped', reason=BREAKOUT.format(14),
+                   title=BREAKOUT.format(15))
+    odd = _rec('tests/ui/c2c/test_c.py::test_b["\'</template></script><img src=x>-chromium]', 'passed',
+               duration=BREAKOUT.format(16))
+    others = _grid(('test_b',), CAMERAS[:2])
+    records = (failed, skipped, odd, *others)
+    summary = {
+        'started': '2026-09-21T05:25:54', 'utc_offset': '-05:00', 'exitstatus': BREAKOUT.format(17),
+        'target': [BREAKOUT.format(18)], 'one_skip_reason': {'count': 1, 'reason': BREAKOUT.format(19)},
+        'advisories': [{'test': BREAKOUT.format(20), 'line': BREAKOUT.format(21)}],
+        'provenance': {'host': BREAKOUT.format(22), 'box': BREAKOUT.format(23), 'git_commit': BREAKOUT.format(24),
+                       'browser': BREAKOUT.format(25), 'browser_latest': BREAKOUT.format(26)},
+        'axis': {'noun': BREAKOUT.format(27), 'columns': {
+            CAMERAS[0]: {'group': BREAKOUT.format(28), 'label': BREAKOUT.format(29), 'title': BREAKOUT.format(30)}}},
+    }
+    page = rp.render_run_page(_run_dir(tmp_path), summary, {r.nodeid: r for r in records},
+                              ['screenshots/' + BREAKOUT.format(31) + '.png'],
+                              previous={'name': BREAKOUT.format(32), 'started': BREAKOUT.format(33)},
+                              product='Mixed: ' + BREAKOUT.format(34))
+    assert 'id="map"' in page   # the axis names are on the page
+    tags = _tags_of(page)
+    assert [attrs for tag, attrs in tags.starts if tag == 'script'] == [{}]
+    assert tags.ends.count('script') == 1
+    assert all(attrs.get('class') == 'brand' for tag, attrs in tags.starts if tag == 'img')
+    broken = [(tag, name) for tag, attrs in tags.starts for name in attrs if name.startswith('on') or name in ('y', 'x')]
+    assert broken == []
+    templates = [attrs.get('id') for tag, attrs in tags.starts if tag == 'template']
+    assert templates == [f't{n}' for n in range(len(records))] + ['t-run', 't-notes', 't-slowest']
+    assert tags.ends.count('template') == len(records) + 3
+    assert (sum(1 for tag, _a in tags.starts if tag == 'aside'), tags.ends.count('aside')) == (1, 1)
+    # Each value is on the page, as text.
+    for n in (1, 2, 5, 6, 7, 8, 14, 21, 28, 29, 30, 31):
+        assert f'&lt;script&gt;alert({n})&lt;/script&gt;' in page, n
+    assert '&lt;/template&gt;' in page and '&quot; onmouseover=&quot;' in page
+
+
+def test_times_of_an_earlier_run_convert_with_that_runs_offset_never_this_machines(tmp_path):
+    """The central pin of the 09/21/2026 audit. 2 runs of 1 target, each with its recorded offset. The page of
+    the newer run stamps each time of the earlier run with the earlier run's offset: 'last seen' on the cause,
+    'Seen before' and the strip in the test's History tab, and 'Changes since' in Run details. The stamps are
+    exact, so the pin holds on a machine in each zone: a page built on a laptop showed box times 5 hours off."""
+    nodeid = 'tests/ui/c2c/test_c.py::test_stream_opens[chromium]'
+    error = 'AssertionError: the stream did not open'
+    for name, started in (('2026-09-20_22-30-00__tests-ui', '2026-09-20T22:30:00'),
+                          ('2026-09-21_02-00-00__tests-ui', '2026-09-21T02:00:00')):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / 'summary.json').write_text(json.dumps({
+            'schema_version': 6, 'started': started, 'utc_offset': '+00:00', 'exitstatus': 1, 'target': ['tests/ui'],
+            'counts': {'passed': 0, 'failed': 1, 'skipped': 0, 'errors': 0},
+            'tests': [{'nodeid': nodeid, 'outcome': 'failed', 'error': error}]}), encoding='utf-8')
+        (tmp_path / name / 'run.html').write_text('x', encoding='utf-8')
+    page = rr.build_run_report(tmp_path / '2026-09-21_02-00-00__tests-ui')
+    earlier = '<time data-utc="2026-09-20T22:30:00Z" data-short>Sep 20, 10:30 PM</time>'
+    link = '<a href="../2026-09-20_22-30-00__tests-ui/run.html">'
+    causes = re.findall(r'<details class="cause">.*?</details>', page, flags=re.DOTALL)
+    assert len(causes) == 1
+    assert f'last seen {earlier}' in causes[0]
+    history = _tab(_template_of(page, rr._safe_name(nodeid, 120)), 2)
+    assert f'Seen before, last on {link}{earlier}</a>' in history
+    assert ('<a class="blk failed" href="../2026-09-20_22-30-00__tests-ui/run.html" data-utc="2026-09-20T22:30:00Z" '
+            'data-label="Failed" title="Sep 20, 10:30 PM: Failed"></a>') in history
+    assert ('<a class="blk failed" href="../2026-09-21_02-00-00__tests-ui/run.html" data-utc="2026-09-21T02:00:00Z" '
+            'data-label="Failed" title="Sep 21, 2:00 AM: Failed"></a>') in history
+    assert f'Changes since the {link}previous run of these tests</a>, {earlier}.' in _named_template(page, 't-run')
+    assert '<time data-utc="2026-09-21T02:00:00Z">Sep 21, 2026, 2:00 AM</time>' in _main_of(page)
+    # No other stamp of the earlier day is on the page: a stamp by a different zone would be one.
+    assert set(re.findall(r'data-utc="(2026-09-20[^"]*)"', page)) == {'2026-09-20T22:30:00Z'}
+
+
+def test_each_run_of_the_strip_converts_with_its_own_offset(tmp_path):
+    """The box ran the earlier run in India (+05:30) and this run in Central time (-05:00): each time of the
+    earlier run is by +05:30, and the times of this run are by -05:00."""
+    nodeid = 'tests/ui/c2c/test_c.py::test_stream_opens[chromium]'
+    for name, started, offset in (('2026-09-20_22-30-00__tests-ui', '2026-09-20T22:30:00', '+05:30'),
+                                  ('2026-09-21_02-00-00__tests-ui', '2026-09-21T02:00:00', '-05:00')):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / 'summary.json').write_text(json.dumps({
+            'schema_version': 6, 'started': started, 'utc_offset': offset, 'exitstatus': 1,
+            'tests': [{'nodeid': nodeid, 'outcome': 'failed', 'error': 'assert 1 == 2'}]}), encoding='utf-8')
+    page = rr.build_run_report(tmp_path / '2026-09-21_02-00-00__tests-ui')
+    assert set(re.findall(r'data-utc="(2026-09-20[^"]*)"', page)) == {'2026-09-20T17:00:00Z'}
+    assert page.count('data-utc="2026-09-20T17:00:00Z"') >= 4   # the cause, Seen before, the strip, Changes since
+    assert set(re.findall(r'data-utc="(2026-09-21[^"]*)"', page)) == {'2026-09-21T07:00:00Z'}
+
+
+def test_rows_with_one_safe_name_get_different_ids(tmp_path):
+    """2 node ids that share their first 120 safe characters: the second row's id gets its index, so each
+    id is on the page 1 time and a link to each row opens its own test."""
+    long_name = 'tests/ui/c2c/test_c.py::test_' + 'x' * 130
+    first, second = _rec(f'{long_name}_one[chromium]', title='First'), _rec(f'{long_name}_two[chromium]', 'failed', title='Second')
+    assert first.safe == second.safe and len(first.safe) == rr.SAFE_NAME_MAX
+    page = _render(tmp_path, [first, second])
+    rows = re.findall(r'<div class="row"[^>]* id="([^"]*)" data-id="(\d+)"', page)
+    assert rows == [(first.safe, '0'), (f'{first.safe}-1', '1')]
+    assert '<h3>First</h3>' in _template_of(page, first.safe)
+    assert '<h3>Second</h3>' in _template_of(page, f'{first.safe}-1')
+    ids = [attrs['id'] for _tag, attrs in _tags_of(_outside_templates(page)).starts if 'id' in attrs]
+    assert len(ids) == len(set(ids))
+
+
+def test_a_row_id_with_an_index_is_not_the_safe_name_of_a_different_test(tmp_path):
+    """'[a b]' and '[a-b]' share a safe name, so the second gets '-<index>'. A third test whose own safe name
+    is that text must not share the id: a link to it opens 1 test."""
+    records = [_rec('tests/a.py::test_x[a b]'), _rec('tests/a.py::test_x[a-b-2]'), _rec('tests/a.py::test_x[a-b]')]
+    assert [r.safe for r in records] == ['tests-a.py-test_x-a-b', 'tests-a.py-test_x-a-b-2', 'tests-a.py-test_x-a-b']
+    ids = re.findall(r'<div class="row"[^>]* id="([^"]*)" data-id="\d+"', _render(tmp_path, records))
+    assert len(ids) == 3
+    assert len(set(ids)) == 3, ids
+
+
+def test_the_pane_holds_run_details_with_no_script(tmp_path):
+    """The source of the page has Run details in the pane, so a reader with no script sees the run's facts.
+    The pane is no live region: a screen reader does not read each test that opens as an alert."""
+    page = _render(tmp_path, [_rec('tests/a.py::test_a[chromium]')], {'exitstatus': 1, 'started': '2026-09-21T05:25:54'})
+    aside = re.search(r'<aside id="pane">(.*?)</aside>', page, flags=re.DOTALL)
+    assert aside, 'the pane has an attribute that the pin does not know'
+    assert '<h3>Run details</h3>' in aside.group(1)
+    assert '<span>Outcome</span><span>Failed</span><span>Exit code</span><span>1</span>' in aside.group(1)
+    assert aside.group(1) == _named_template(page, 't-run')   # the same content that the script shows at rest
+    assert 'aria-live' not in page
+
+
+def test_the_row_glyph_and_the_map_square_say_the_outcome(tmp_path):
+    """The glyph of a row is an image with the outcome as its name. Each map cell with a test carries the
+    test's index on the cell and on its button, so a click beside the small square opens the test too."""
+    records = _grid(('test_a', 'test_b'), CAMERAS[:2])
+    records[0].outcome, records[3].outcome = 'failed', 'skipped'
+    records.append(_rec('tests/ui/c2c/test_c.py::test_c[chromium]', 'unknown'))
+    page = _render(tmp_path, records)
+    for outcome, css, label in (('failed', 'fail', 'Failed'), ('skipped', 'skip', 'Skipped'), ('passed', 'pass', 'Passed'),
+                                ('unknown', 'unkn', rr.outcome_label('unknown'))):
+        assert f'data-o="{css}" data-test=' in page
+        assert re.search(rf'data-o="{css}" data-test="[^"]*"><span class="g {css}" role="img" aria-label="{label}"></span>', page), outcome
+    cells = re.findall(r'<td(?: class="edge")? data-col="\d+" data-id="(\d+)"><button type="button" class="g \w+" data-id="(\d+)"', page)
+    assert len(cells) == 4
+    assert all(cell == button for cell, button in cells)
+    assert sorted(cell for cell, _b in cells) == ['0', '1', '2', '3']
+
+
+def test_the_verdict_counts_each_row_and_says_which_failures_are_errors(tmp_path):
+    """The total of the verdict is the count of the All tab: a test with no outcome is in it. The line under
+    the verdict says how many failures are errors (the test could not start) and how many tests have no outcome."""
+    records = [_rec('tests/a.py::test_a[chromium]'), _rec('tests/a.py::test_b[chromium]', 'unknown'),
+               _rec('tests/a.py::test_c[chromium]', 'unknown')]
+    page = _render(tmp_path, records)
+    assert '<p class="verdict"><em class="tone-pass">1 of 3 passed.</em></p>' in page
+    assert '2 tests have no recorded outcome.' in _main_of(page)
+    assert 'All<b>3</b>' in page
+    records += [_rec('tests/a.py::test_d[chromium]', 'error', signature='s1', headline='fixture failed'),
+                _rec('tests/a.py::test_e[chromium]', 'failed', signature='s2', headline='assert 1 == 2')]
+    records[1].outcome = 'passed'
+    page = _render(tmp_path / 'errors', records)
+    assert '<em class="tone-fail">2 of 5 failed.</em> 2 causes.' in page
+    sub = re.search(r'<p class="sub">(.*?)</p>', _main_of(page)).group(1)
+    assert '1 failure is an error: the test could not start.' in sub
+    assert '1 test has no recorded outcome.' in sub
+    records[4].outcome = 'error'
+    assert '2 failures are errors: the test could not start.' in _render(tmp_path / 'two', records)
+    # A run with no error and no unknown outcome says neither.
+    plain = _render(tmp_path / 'plain', [_rec('tests/a.py::test_a[chromium]'), _rec('tests/a.py::test_b[chromium]', 'failed')])
+    assert 'could not start' not in plain and 'no recorded outcome' not in _main_of(plain)
+
+
+def test_a_video_has_a_link_beside_the_player(tmp_path):
+    """The player needs a browser that plays WebM. The 'Video clip' link opens or saves the file in each browser."""
+    rec = _rec('tests/a.py::test_a[chromium]', 'failed', digest={}, videos=['traces/a b-video.webm'])
+    evidence = _tab(_template_of(_render(tmp_path, [rec]), rec.safe), 1)
+    assert ('<video controls preload="none" src="traces/a%20b-video.webm"></video>'
+            '<div><a href="traces/a%20b-video.webm">Video clip</a></div>') in evidence
+
+
+def test_the_style_shows_the_keyboard_focus():
+    """The buttons of the page unset the browser's style, so the page gives them a focus outline again.
+    The dim text colour on the light page is #5f646c."""
+    css = rp.RUN_PAGE_CSS
+    rule = re.search(r'([^{}]*)\{ outline:2px solid var\(--ink\); outline-offset:2px; \}', css)
+    assert rule
+    for selector in ('nav button', '.panelinks button', '.tabs button', '#clock', '#maptoggle', '#close', '#filter'):
+        assert f'{selector}:focus-visible' in rule.group(1)
+    assert css.count('--dim:#5f646c') == 1
+    assert 'body.noscroll { overflow:hidden; }' in css
+
+
 # ---------------------------------------------------------------------------
 # The page's script, in Chrome
 # ---------------------------------------------------------------------------
 
 def _browser_run(tmp_path: Path) -> tuple[Path, list[rr.TestRecord]]:
     """3 tests on 3 cameras: 'Stream opens' fails on 2 cameras with 1 error, 'Snapshot saves' is
-    skipped on 1, 'Reboot works' passes on each. Written to run.html in a run folder."""
+    skipped on 1, 'Reboot works' passes on each. The first failure has a history of 2 runs, each with
+    its offset. Written to run.html in a run folder."""
     titles = {'test_a': 'Stream opens', 'test_b': 'Snapshot saves', 'test_c': 'Reboot works'}
     records = _grid()
     for rec in records:
@@ -440,6 +789,9 @@ def _browser_run(tmp_path: Path) -> tuple[Path, list[rr.TestRecord]]:
     for rec, address in zip(records[:2], ('10.2.0.129', '10.2.0.171')):
         rec.outcome, rec.signature, rec.headline = 'failed', 'Camera # reports no stream', f'Camera {address} reports no stream'
     records[4].outcome, records[4].reason = 'skipped', 'The camera has no SD card'
+    records[0].history = rr.history_facts([
+        {'run': '2026-09-21_10-00-00__tests-ui', 'started': '2026-09-21T05:25:54', 'utc_offset': '-05:00', 'outcome': 'failed'},
+        {'run': '2026-09-20_22-30-00__tests-ui', 'started': '2026-09-20T22:30:00', 'utc_offset': '+00:00', 'outcome': 'passed'}])
     summary = {'started': '2026-09-21T05:25:54', 'utc_offset': '-05:00', 'exitstatus': 1,
                'advisories': [{'test': records[0].nodeid, 'line': '[C2C] the stream took 9 s to open'}]}
     run = _run_dir(tmp_path)
@@ -534,6 +886,230 @@ def test_the_health_pages_link_to_a_runs_notes_opens_the_notes(tmp_path):
         heading = page.inner_text('#pane h3')
         browser.close()
     assert heading == 'Notes (1)'
+
+
+@pytest.fixture
+def chrome():
+    """open_page(url, width, height) in a real Chrome, and the list of the script errors of each page
+    that it opened. Skips on a machine with no Playwright or no Chrome."""
+    sync_api = pytest.importorskip('playwright.sync_api')
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(channel='chrome')
+        except sync_api.Error:
+            pytest.skip('no Chrome on this machine')
+        errors: list[str] = []
+
+        def open_page(url: str, width: int = 1400, height: int = 900):
+            page = browser.new_page(viewport={'width': width, 'height': height})
+            page.on('pageerror', lambda err: errors.append(str(err)))
+            page.goto(url)
+            return page
+
+        yield open_page, errors
+        browser.close()
+
+
+ACTIVE_ID = '() => document.activeElement && document.activeElement.id'
+NOSCROLL = "() => document.body.classList.contains('noscroll')"
+
+
+def test_on_a_narrow_screen_a_link_to_a_test_opens_the_pane_and_close_gives_the_focus_back(tmp_path, chrome):
+    """At 800 by 700 the pane covers the page. A link to '#<row id>' shows it, with the page behind held
+    still (body.noscroll). Close hides it, lets the page scroll and puts the focus on the row. Enter on the row
+    opens it again with the focus on Close, and Escape closes it the same way."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    failed = records[0]
+    page = open_page(f'{path.as_uri()}#{failed.safe}', 800, 700)
+    assert page.evaluate("() => getComputedStyle(document.querySelector('#pane')).position") == 'fixed'
+    assert page.is_visible('#pane')
+    assert page.inner_text('#pane h3') == 'Stream opens'
+    assert page.evaluate(NOSCROLL) is True
+    assert page.evaluate("() => getComputedStyle(document.body).overflow") == 'hidden'
+    page.click('#close')
+    assert page.is_hidden('#pane')
+    assert page.evaluate(NOSCROLL) is False
+    assert page.evaluate(ACTIVE_ID) == failed.safe
+    # By the keyboard: Enter on the row opens the pane, Escape closes it and the focus is on the row again.
+    page.keyboard.press('Enter')
+    assert page.is_visible('#pane')
+    assert page.evaluate(NOSCROLL) is True
+    assert page.evaluate(ACTIVE_ID) == 'close'
+    assert page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle") != 'none'
+    page.keyboard.press('Escape')
+    assert page.is_hidden('#pane')
+    assert page.evaluate(NOSCROLL) is False
+    assert page.evaluate(ACTIVE_ID) == failed.safe
+    # A new hash on the open page opens the pane with the focus on Close, and Close gives it to that row.
+    page.evaluate('(id) => { location.hash = "#" + id; }', records[4].safe)
+    page.wait_for_function("() => document.querySelector('#pane h3').textContent === 'Snapshot saves'")
+    assert page.is_visible('#pane')
+    assert page.evaluate(ACTIVE_ID) == 'close'
+    page.click('#close')
+    assert page.evaluate(ACTIVE_ID) == records[4].safe
+    # With no link the pane stays shut: the page opens on the list.
+    plain = open_page(path.as_uri(), 800, 700)
+    assert plain.is_hidden('#pane')
+    assert plain.evaluate(NOSCROLL) is False
+    # The link to the notes opens the pane too.
+    notes = open_page(f'{path.as_uri()}#advisories', 800, 700)
+    assert notes.is_visible('#pane')
+    assert notes.inner_text('#pane h3') == 'Notes (1)'
+    assert errors == []
+
+
+def test_on_a_narrow_screen_a_link_to_a_test_puts_the_focus_on_close(tmp_path, chrome):
+    """The pane covers the page, so the focus must be in it: on Close. When the page loads from a link to a
+    row, the browser moves the focus to the target of the link after the script ran. The pin reads the focus
+    after the load, where the reader finds it."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    page = open_page(f'{path.as_uri()}#{records[0].safe}', 800, 700)
+    assert page.is_visible('#pane')
+    assert page.evaluate(ACTIVE_ID) == 'close'
+    assert errors == []
+
+
+def test_the_tab_of_the_list_that_is_open_says_pressed_from_the_start(tmp_path, chrome):
+    """The tabs of the list are toggle buttons. A screen reader hears which one is pressed when the page
+    opens, before a click: the first tab says true and each other tab says false."""
+    open_page, errors = chrome
+    path, _records = _browser_run(tmp_path)
+    page = open_page(path.as_uri())
+    pressed = "() => [...document.querySelectorAll('nav button')].map(b => [b.dataset.f, b.getAttribute('aria-pressed')])"
+    assert page.evaluate(pressed) == [['fail', 'true'], ['skip', 'false'], ['pass', 'false'], ['all', 'false']]
+    page.click('nav button[data-f="all"]')
+    assert page.evaluate(pressed) == [['fail', 'false'], ['skip', 'false'], ['pass', 'false'], ['all', 'true']]
+    assert errors == []
+
+
+def test_a_new_hash_on_the_open_page_opens_that_test(tmp_path, chrome):
+    """A reader pastes a link to a different test into the tab that has the page: the hash changes with no
+    load, and the page opens that test under its tab. On a wide screen the pane is beside the list, so the
+    page scrolls and the focus stays."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    failed, skipped = records[1], records[4]
+    page = open_page(f'{path.as_uri()}#{failed.safe}')
+    assert 'DC-5V-1 5b42' in page.text_content('#pane .lab')
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    assert page.evaluate(NOSCROLL) is False
+    assert page.evaluate(ACTIVE_ID) != 'close'
+    page.evaluate('(id) => { location.hash = "#" + id; }', skipped.safe)
+    page.wait_for_function("() => document.querySelector('#pane h3').textContent === 'Snapshot saves'")
+    assert 'The camera has no SD card' in page.inner_text('#pane section.on')
+    assert page.evaluate(VISIBLE_ROWS) == ['skip']
+    assert page.get_attribute(f'[id="{skipped.safe}"]', 'class') == 'row sel'
+    assert page.get_attribute(f'[id="{failed.safe}"]', 'class') == 'row off'
+    assert page.get_attribute('nav button[data-f="skip"]', 'aria-pressed') == 'true'
+    assert page.get_attribute('nav button[data-f="fail"]', 'aria-pressed') == 'false'
+    # A hash that names no row changes nothing.
+    page.evaluate('() => { location.hash = "#no-such-row"; }')
+    page.evaluate('() => new Promise(done => setTimeout(done, 50))')
+    assert page.inner_text('#pane h3') == 'Snapshot saves'
+    assert errors == []
+
+
+def test_escape_in_the_filter_box_clears_the_box_first(tmp_path, chrome):
+    """Escape in the filter box with text in it clears the box, and the open test stays. Escape with the box
+    empty does what Escape does on the rest of the page: the pane goes back to Run details."""
+    open_page, errors = chrome
+    path, _records = _browser_run(tmp_path)
+    page = open_page(path.as_uri())
+    page.click('#list .row[data-o="fail"] >> nth=0')
+    assert page.inner_text('#pane h3') == 'Stream opens'
+    page.click('#filter')
+    page.keyboard.type('5b41')
+    assert page.evaluate(VISIBLE_ROWS) == ['fail']
+    page.keyboard.press('Escape')
+    assert page.inner_text('#pane h3') == 'Stream opens'
+    assert page.input_value('#filter') == ''
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    assert page.evaluate(ACTIVE_ID) == 'filter'
+    page.keyboard.press('Escape')
+    assert page.inner_text('#pane h3') == 'Run details'
+    assert errors == []
+
+
+def test_the_clock_switch_moves_the_strip_tooltips_and_the_tab_title(tmp_path, chrome):
+    """The tooltips of a history strip in the pane, and the title of the browser tab, are times too: they are
+    on the clock of the heading, before and after the switch. A test that opens after the switch is on it too."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    page = open_page(f'{path.as_uri()}#{records[0].safe}')
+    pressed = "() => [...document.querySelectorAll('#pane [data-tab]')].map(b => b.getAttribute('aria-pressed'))"
+    assert page.evaluate(pressed) == ['true', 'false', 'false', 'false']
+    page.click('#pane [data-tab="2"]')
+    assert page.evaluate(pressed) == ['false', 'false', 'true', 'false']
+    tips = "() => [...document.querySelectorAll('#pane .blk')].map(b => b.title)"
+    assert re.search(r' (AM|PM) ', page.text_content('h1 time'))
+    assert page.evaluate(tips) == ['Sep 20, 5:30 PM: Passed', 'Sep 21, 5:25 AM: Failed']
+    assert re.fullmatch(r'Test Run - Sep 21, 2026, 5:25 AM (CDT|CST)', page.title())
+    page.click('#clock')
+    assert not re.search(r'AM|PM', page.text_content('h1 time'))
+    after = page.evaluate(tips)
+    assert after == ['Sep 21, 04:00: Passed', 'Sep 21, 15:55: Failed']
+    assert not any(re.search(r'AM|PM', tip) for tip in after)
+    assert page.title() == 'Test Run - Sep 21, 2026, 15:55 IST'
+    # The pane is written again for each test that opens: its tooltips are on the 24 hour clock from the start.
+    page.keyboard.press('Escape')
+    page.click(f'[id="{records[0].safe}"]')
+    assert page.evaluate(tips) == after
+    page.click('#clock')
+    assert all(re.search(r' (AM|PM): ', tip) for tip in page.evaluate(tips))
+    assert re.fullmatch(r'Test Run - Sep 21, 2026, 5:25 AM (CDT|CST)', page.title())
+    assert errors == []
+
+
+def test_a_click_in_a_map_cell_beside_its_square_opens_the_test(tmp_path, chrome):
+    """The square of the map is 11 pixels wide in a cell of 52: a click in the cell that misses the square
+    opens the test of that cell."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    passed = records[2]   # 'Stream opens' on the third camera
+    page = open_page(path.as_uri())
+    index = page.get_attribute(f'[id="{passed.safe}"]', 'data-id')
+    box = page.locator(f'#map td[data-id="{index}"]').bounding_box()
+    x, y = box['x'] + 4, box['y'] + box['height'] / 2
+    assert page.evaluate('([x, y]) => document.elementFromPoint(x, y).tagName', [x, y]) == 'TD'
+    assert page.inner_text('#pane h3') == 'Run details'
+    page.mouse.click(x, y)
+    assert page.inner_text('#pane h3') == 'Stream opens'
+    assert 'BC-5V-1 5b43' in page.text_content('#pane .lab')
+    assert 'sel' in page.get_attribute(f'#map td[data-id="{index}"] button', 'class')
+    # A cell with no test opens nothing, and a click on the head of a column opens nothing.
+    page.keyboard.press('Escape')
+    page.click('#map thead th.cam >> nth=0')
+    assert page.inner_text('#pane h3') == 'Run details'
+    assert errors == []
+
+
+def test_the_tab_key_shows_where_the_focus_is(tmp_path, chrome):
+    """The buttons of the page unset the browser's style, and the focus ring went with it. Each control that the
+    Tab key reaches shows an outline: the tabs of the list, the filter box, the clock, the pane links, the map
+    switch and the tabs of the pane."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    page = open_page(f'{path.as_uri()}#{records[0].safe}')
+    kinds = ('nav button', '.panelinks button', '.tabs button', '#clock', '#maptoggle', '#filter')
+    probe = ('(kinds) => { var el = document.activeElement; var kind = kinds.find(k => el.matches(k)); '
+             'return kind ? [kind, el.matches(":focus-visible"), getComputedStyle(el).outlineStyle, '
+             'getComputedStyle(el).outlineWidth] : null; }')
+    seen: dict[str, list] = {}
+    for _press in range(80):
+        page.keyboard.press('Tab')
+        found = page.evaluate(probe, list(kinds))
+        if found:
+            seen.setdefault(found[0], found[1:])
+        if len(seen) == len(kinds):
+            break
+    assert set(seen) == set(kinds)
+    for kind, (focus_visible, style, width) in seen.items():
+        assert focus_visible is True, kind
+        assert style != 'none', kind
+        assert width == '2px', kind
+    assert errors == []
 
 
 def test_a_folder_stamp_is_a_time_too():

@@ -272,6 +272,46 @@ def test_copy_screenshots_caps_the_destination_path(tmp_path, monkeypatch):
 # Summary shape
 # ---------------------------------------------------------------------------
 
+RECENT_EPOCH = 1790000000.0   # September 2026
+
+
+def _offset_text(seconds: int) -> str:
+    sign = '-' if seconds < 0 else '+'
+    return f'{sign}{abs(seconds) // 3600:02d}:{abs(seconds) % 3600 // 60:02d}'
+
+
+def test_utc_offset_is_this_machines_offset_at_that_moment():
+    """The recorded offset is the offset that the platform gives for that moment, and the summary carries it."""
+    import time
+    here = _offset_text(time.localtime(RECENT_EPOCH).tm_gmtoff)
+    assert ra._utc_offset(RECENT_EPOCH) == here
+    summary = ra._build_summary(started=RECENT_EPOCH, ended=RECENT_EPOCH + 5, exitstatus=0, counts={},
+                                target=[], markexpr='', keyword='', report_file='report.html')
+    assert summary['utc_offset'] == here
+
+
+@pytest.mark.parametrize(('seconds', 'text'), [
+    (19800, '+05:30'), (-18000, '-05:00'), (-12600, '-03:30'), (0, '+00:00'), (None, '+00:00'), (50400, '+14:00'),
+])
+def test_utc_offset_writes_the_sign_the_hours_and_the_minutes(monkeypatch, seconds, text):
+    """A zone east of UTC is '+', a zone west is '-', and a half hour stays a half hour on each side."""
+    import time
+    monkeypatch.setattr(time, 'localtime', lambda epoch: SimpleNamespace(tm_gmtoff=seconds))
+    assert ra._utc_offset(RECENT_EPOCH) == text
+
+
+@pytest.mark.parametrize('error', [OSError, OverflowError, ValueError])
+def test_utc_offset_of_a_time_that_the_platform_cannot_place_is_empty(monkeypatch, error):
+    """The platform refuses the time: the summary records no offset, and the run keeps its archive."""
+    import time
+
+    def refuse(epoch):
+        raise error('out of range')
+
+    monkeypatch.setattr(time, 'localtime', refuse)
+    assert ra._utc_offset(RECENT_EPOCH) == ''
+
+
 def test_summary_shape():
     """The summary carries exactly the schema keys with the run's facts."""
     counts = {'passed': 3, 'failed': 1, 'skipped': 2, 'errors': 0}

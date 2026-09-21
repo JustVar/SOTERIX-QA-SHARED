@@ -737,8 +737,10 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     assert '<span>This error</span><span>New: no earlier run in the archive shows it</span>' in history
     assert 'Passed 1/2' in history
     assert 'Flaky 50%' in history
-    assert ('class="blk passed" href="../2026-08-23_10-00-00__tests-ui-views/run.html" '
-            'title="Aug 23, 10:00 AM: Passed"') in history
+    # The earlier run recorded no start and no offset: its stamp comes from the folder name and the
+    # zone of the machine that builds the page, so the pin takes each stamp. The label is exact.
+    assert re.search(r'class="blk passed" href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html" '
+                     r'data-utc="2026-08-2[234]T\d\d:\d\d:00Z" data-label="Passed" title="Aug 23, 10:00 AM: Passed"', history)
     key = re.search(r' data-test="([^"]*)"', row).group(1)
     assert 'verify the view opens.' in key
     assert NODEID.lower() in key
@@ -921,9 +923,11 @@ def test_signatures_seen_takes_the_newest_run():
                                                                      'u': 'assert 1 == 2'}},
         {'name': 'r1', 'started': '2026-08-22T12:00:00', 'errors': {}},
     ]
+    history[1]['utc_offset'] = '+05:30'
     seen = rr.signatures_seen(history)
-    assert seen == {'Timeout #ms': {'run': 'r3', 'started': '2026-08-24T12:00:00'},
-                    'assert # == #': {'run': 'r2', 'started': '2026-08-23T12:00:00'}}
+    # Each entry carries the offset of its own run: None for a run that recorded none.
+    assert seen == {'Timeout #ms': {'run': 'r3', 'started': '2026-08-24T12:00:00', 'utc_offset': None},
+                    'assert # == #': {'run': 'r2', 'started': '2026-08-23T12:00:00', 'utc_offset': '+05:30'}}
     assert rr.signatures_seen([]) == {}
     assert rr.signatures_seen([{'name': 'r', 'errors': {'t': ''}}]) == {}
 
@@ -951,7 +955,7 @@ def test_load_run_errors_prefers_the_summary_then_the_report(tmp_path):
 
 def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
     """Two failures with one signature are 1 cause with the count 2 and the words they share;
-    an error the previous run showed says since when, with a link in the test's History tab."""
+    an error the previous run showed says when it was last seen, with a link in the test's History tab."""
     run = _make_run(tmp_path)
     twin_log = FAILED_LOG.replace('30000ms', '15000ms')
     (run / 'report.html').write_text(_report_html({
@@ -983,10 +987,13 @@ def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
     assert group.count('<span class="new">new</span>') == 1
     # The assertion failure stands alone and was seen in the previous run.
     assert '<summary><b>1</b><span class="msg">assert 1 == 2</span>' in single
-    assert re.search(r'since <time [^>]*data-short>Aug 23, 10:00 AM</time>', single)
+    # The previous run recorded no offset, so the stamp is by this machine's zone and the pin takes each one.
+    # test_times_of_an_earlier_run_convert_with_that_runs_offset (test_reporting_run_page.py) pins exact stamps.
+    assert re.search(r'last seen <time data-utc="[^"]*" data-short>Aug 23, 10:00 AM</time>', single)
+    assert 'since <time' not in page
     history = _tab(_template_of(page, rr._safe_name(TWIN_B, 120)), 2)
     assert re.search(r'Seen before, last on <a href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html">'
-                     r'<time [^>]*>Aug 23, 10:00 AM</time></a>', history)
+                     r'<time data-utc="[^"]*" data-short>Aug 23, 10:00 AM</time></a>', history)
     assert 'New: no earlier run' in _tab(_template_of(page, SAFE), 2)
     # NODEID passed before (new failure), TWIN_B failed before (still
     # failing), TWIN_A was not in the previous run (a new test, not a count).
@@ -1039,12 +1046,13 @@ def test_history_facts_keeps_the_newest_20():
 
 def test_test_results_keeps_only_the_runs_that_ran_the_test():
     """A run without the test contributes no block."""
-    runs = [{'name': 'r2', 'started': 's2', 'outcomes': {'a': 'failed', 'b': 'passed'}},
+    runs = [{'name': 'r2', 'started': 's2', 'utc_offset': '-05:00', 'outcomes': {'a': 'failed', 'b': 'passed'}},
             {'name': 'r1', 'started': 's1', 'outcomes': {'a': 'passed'}},
             {'name': 'r0', 'outcomes': None}]
-    assert rr.test_results('a', runs) == [{'run': 'r2', 'started': 's2', 'outcome': 'failed'},
-                                          {'run': 'r1', 'started': 's1', 'outcome': 'passed'}]
-    assert rr.test_results('b', runs) == [{'run': 'r2', 'started': 's2', 'outcome': 'passed'}]
+    # Each result carries the offset of its own run: None for a run that recorded none.
+    assert rr.test_results('a', runs) == [{'run': 'r2', 'started': 's2', 'utc_offset': '-05:00', 'outcome': 'failed'},
+                                          {'run': 'r1', 'started': 's1', 'utc_offset': None, 'outcome': 'passed'}]
+    assert rr.test_results('b', runs) == [{'run': 'r2', 'started': 's2', 'utc_offset': '-05:00', 'outcome': 'passed'}]
     assert rr.test_results('c', runs) == []
 
 
@@ -1063,6 +1071,24 @@ def test_render_strip_links_each_block_and_labels_flaky():
     assert 'Passed 1/2' not in bare
     assert rr.render_strip(rr.history_facts([])) == ''
     assert rr.render_strip({}) == ''
+    # The health page has no clock switch: with no `clock`, a block has no stamp.
+    assert 'data-utc' not in html_ and 'data-label' not in html_
+
+
+def test_render_strip_with_a_clock_stamps_each_block_with_its_runs_offset():
+    """clock=True (the run page): each block carries its start as UTC, by the offset of its own run, and its
+    outcome label, before the tooltip. The script writes the tooltip again on the reader's clock.
+    A block whose start is no time gets no stamp and keeps its tooltip."""
+    results = _results('failed', 'passed', 'error')
+    results[0]['utc_offset'], results[1]['utc_offset'] = '-05:00', '+05:30'
+    results[2]['started'], results[2]['utc_offset'] = 'not a time', '+00:00'
+    html_ = rr.render_strip(rr.history_facts(results), '../', clock=True)
+    assert ('<a class="blk failed" href="../2026-08-20_10-00-00__views/run.html" data-utc="2026-08-20T15:00:00Z" '
+            'data-label="Failed" title="Aug 20, 10:00 AM: Failed"></a>') in html_
+    assert ('<a class="blk passed" href="../2026-08-19_10-00-00__views/run.html" data-utc="2026-08-19T04:30:00Z" '
+            'data-label="Passed" title="Aug 19, 10:00 AM: Passed"></a>') in html_
+    assert '<a class="blk error" href="../2026-08-18_10-00-00__views/run.html" title="' in html_
+    assert html_.count('data-utc=') == 2
 
 
 def test_find_earlier_runs_newest_first_and_capped(tmp_path):
@@ -1078,22 +1104,24 @@ def test_find_earlier_runs_newest_first_and_capped(tmp_path):
 
 
 def test_load_history_reads_outcomes_errors_and_start_times(tmp_path):
-    """History carries each earlier run's name, start, outcomes, and error lines."""
+    """History carries each earlier run's name, start, UTC offset, outcomes, and error lines."""
     run = _make_run(tmp_path)
-    for day, error in ((22, 'assert 1 == 2'), (23, None)):
+    for day, error, offset in ((22, 'assert 1 == 2', '+05:30'), (23, None, None)):
         prev = tmp_path / f'2026-08-{day}_10-00-00__tests-ui-views'
         prev.mkdir()
         (prev / 'summary.json').write_text(json.dumps({
-            'started': f'2026-08-{day}T10:00:00',
+            'started': f'2026-08-{day}T10:00:00', **({'utc_offset': offset} if offset else {}),
             'tests': [{'nodeid': NODEID, 'outcome': 'failed' if error else 'passed',
                        'error': error}]}), encoding='utf-8')
     history = rr.load_history(run)
     assert [h['name'] for h in history] == ['2026-08-23_10-00-00__tests-ui-views',
                                             '2026-08-22_10-00-00__tests-ui-views']
     assert history[0] == {'name': '2026-08-23_10-00-00__tests-ui-views',
-                          'started': '2026-08-23T10:00:00',
+                          'started': '2026-08-23T10:00:00', 'utc_offset': None,
                           'outcomes': {NODEID: 'passed'}, 'errors': {}}
     assert history[1]['errors'] == {NODEID: 'assert 1 == 2'}
+    # The offset is the earlier run's own, never the offset of the run that the page is for.
+    assert history[1]['utc_offset'] == '+05:30'
     assert rr.load_history(run, limit=1) == []
 
 
@@ -1125,8 +1153,12 @@ def test_page_names_the_product_in_title_and_header(tmp_path, monkeypatch):
     details = _named_template(page, 't-run')
     assert '<span>Product</span><span>NexaiQ-Neurosen</span>' in details
     assert details.index('<span>Product</span>') < details.index('<span>Environment</span><span>QA</span>')
-    # One product: no row and no test pane names it again.
-    assert page.count('<span>Product</span>') == 1
+    # One product: no row and no test pane names it again. Run details are on the page 2 times:
+    # the template, and the pane at rest.
+    assert page.count('<span>Product</span>') == 2
+    assert _outside_templates(page).count('<span>Product</span>') == 1
+    assert not any('<span>Product</span>' in t
+                   for t in re.findall(r'<template id="t\d+">.*?</template>', page, flags=re.DOTALL))
     assert '<span class="m">NexaiQ-Neurosen</span>' not in page
     # The product is a word the filter box matches.
     assert 'nexaiq-neurosen' in re.search(r' data-test="([^"]*)"', page).group(1)
@@ -1214,7 +1246,8 @@ def test_history_and_delta_links_open_what_the_older_run_has(tmp_path):
     _add_summary_tests(run, _summary_test_rows())
     prev = tmp_path / '2026-08-23_10-00-00__tests-ui-views'
     prev.mkdir()
-    (prev / 'summary.json').write_text(json.dumps({'started': '2026-08-23T10:00:00', 'tests': [
+    # The previous run recorded its offset, so each of its times has 1 exact stamp on each machine: 10:00 at +05:30.
+    (prev / 'summary.json').write_text(json.dumps({'started': '2026-08-23T10:00:00', 'utc_offset': '+05:30', 'tests': [
         {'nodeid': NODEID, 'outcome': 'failed', 'error': 'playwright._impl._errors.TimeoutError: '
                                                           'Locator.click: Timeout 5ms exceeded.'},
         {'nodeid': TWIN_A, 'outcome': 'passed'}]}), encoding='utf-8')
@@ -1229,13 +1262,14 @@ def test_history_and_delta_links_open_what_the_older_run_has(tmp_path):
     assert ('<a href="../2026-08-23_10-00-00__tests-ui-views/report.html">'
             'Previous run of these tests</a>') in details
     assert re.search(r'Changes since the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
-                     r'previous run of these tests</a>, <time [^>]*>Aug 23, 10:00 AM</time>', details)
+                     r'previous run of these tests</a>, '
+                     r'<time data-utc="2026-08-23T04:30:00Z" data-short>Aug 23, 10:00 AM</time>', details)
     history = _tab(_template_of(page, SAFE), 2)
     assert ('class="blk failed" href="../2026-08-23_10-00-00__tests-ui-views/report.html" '
-            'title="Aug 23, 10:00 AM: Failed"') in history
+            'data-utc="2026-08-23T04:30:00Z" data-label="Failed" title="Aug 23, 10:00 AM: Failed"') in history
     assert 'class="blk passed" href="../2026-08-22_10-00-00__tests-ui-views/" ' in history
     assert re.search(r'Seen before, last on <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
-                     r'<time [^>]*>Aug 23, 10:00 AM</time></a>', history)
+                     r'<time data-utc="2026-08-23T04:30:00Z" data-short>Aug 23, 10:00 AM</time></a>', history)
     # This run's own block links its run.html: the page being written.
     assert 'href="../2026-08-24_10-00-00__tests-ui-views/run.html"' in history
 

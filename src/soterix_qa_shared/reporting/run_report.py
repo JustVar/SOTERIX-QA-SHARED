@@ -674,12 +674,15 @@ def load_run_errors(run_dir: Path) -> dict[str, str]:
 
 def load_history(run_dir: Path, limit: int = HISTORY_RUNS) -> list[dict]:
     """The earlier runs of this target the page compares with, newest
-    first: {'name', 'started', 'outcomes', 'errors'} each. At most
-    limit - 1 of them, so that with this run the window holds `limit`."""
+    first: {'name', 'started', 'utc_offset', 'outcomes', 'errors'} each. At most
+    limit - 1 of them, so that with this run the window holds `limit`.
+    'utc_offset' is the earlier run's own: a page built on a laptop showed the
+    times of earlier box runs in the laptop's zone, 5 hours off (audit 09/21/2026)."""
     history = []
     for earlier in find_earlier_runs(run_dir, limit - 1):
         summary = load_summary(earlier)
         history.append({'name': earlier.name, 'started': run_started(earlier, summary),
+                        'utc_offset': summary.get('utc_offset'),
                         'outcomes': load_previous_outcomes(earlier),
                         'errors': load_run_errors(earlier)})
     return history
@@ -687,7 +690,8 @@ def load_history(run_dir: Path, limit: int = HISTORY_RUNS) -> list[dict]:
 
 def test_results(nodeid: str, runs: list[dict]) -> list[dict]:
     """The test's outcome in each run that ran it, in the runs' order."""
-    return [{'run': r['name'], 'started': r.get('started'), 'outcome': r['outcomes'][nodeid]}
+    return [{'run': r['name'], 'started': r.get('started'), 'utc_offset': r.get('utc_offset'),
+             'outcome': r['outcomes'][nodeid]}
             for r in runs if nodeid in (r.get('outcomes') or {})]
 
 
@@ -712,13 +716,14 @@ def history_facts(results: list[dict], limit: int = HISTORY_RUNS) -> dict:
 
 def signatures_seen(history: list[dict]) -> dict[str, dict]:
     """Error signature -> the newest earlier run that showed it, as
-    {'run', 'started'}. `history` is newest first, as load_history gives it."""
+    {'run', 'started', 'utc_offset'}. `history` is newest first, as load_history gives it."""
     seen: dict[str, dict] = {}
     for run in history:
         for line in (run.get('errors') or {}).values():
             signature = error_signature(line)
             if signature and signature not in seen:
-                seen[signature] = {'run': run['name'], 'started': run.get('started')}
+                seen[signature] = {'run': run['name'], 'started': run.get('started'),
+                                   'utc_offset': run.get('utc_offset')}
     return seen
 
 
@@ -1410,7 +1415,7 @@ def _seen_chip(rec: TestRecord, links: RunLinks | None = None) -> str:
 
 
 def render_strip(facts: Mapping, href_prefix: str = '', with_text: bool = True,
-                 links: RunLinks | None = None) -> str:
+                 links: RunLinks | None = None, clock: bool = False) -> str:
     """The history strip: one block per run, oldest left and newest right,
     each a link to that run's page with the date and outcome as its
     tooltip. With `with_text`, "passed 17/20" follows, then the flaky
@@ -1420,8 +1425,14 @@ def render_strip(facts: Mapping, href_prefix: str = '', with_text: bool = True,
     if not facts or not facts.get('runs'):
         return ''
     links = links or RunLinks()
+    from soterix_qa_shared.reporting.run_page import utc_iso
+
+    def stamp(block: Mapping) -> str:
+        utc = utc_iso(block.get('started'), block.get('utc_offset'))
+        # `clock`: the run page's script shows each tooltip on the reader's clock. The health page has no clock switch.
+        return f' data-utc="{utc}" data-label="{escape(outcome_label(block["outcome"]), quote=True)}"' if clock and utc else ''
     blocks = ''.join(
-        f'<a class="blk {escape(str(b["outcome"]))}" href="{links.href(b["run"], href_prefix)}" '
+        f'<a class="blk {escape(str(b["outcome"]))}" href="{links.href(b["run"], href_prefix)}"{stamp(b)} '
         f'title="{escape(friendly_time(b.get("started")))}: {escape(outcome_label(b["outcome"]))}"></a>'
         for b in facts['blocks'])
     parts = [(f'<span class="strip" title="the last {facts["runs"]} runs of these tests, '
@@ -1885,7 +1896,8 @@ def build_run_report(run_dir: Path) -> str:
     for nodeid, chip in chips.items():
         tests[nodeid].delta = chip
 
-    current = {'name': run_dir.name, 'started': run_started(run_dir, summary), 'outcomes': outcomes}
+    current = {'name': run_dir.name, 'started': run_started(run_dir, summary),
+               'utc_offset': summary.get('utc_offset'), 'outcomes': outcomes}
     runs = [current, *history]
     for nodeid, rec in tests.items():
         rec.history = history_facts(test_results(nodeid, runs))

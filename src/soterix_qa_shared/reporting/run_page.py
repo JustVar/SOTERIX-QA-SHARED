@@ -45,7 +45,7 @@ ZONE_24H = ('Asia/Kolkata', 'IST')
 BROWSERS = ('chromium', 'firefox', 'webkit', 'chrome', 'msedge')
 MAP_MAX_COLUMNS = 40
 _FOLDER_STAMP_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})[ _T](\d{2})-(\d{2})-(\d{2})$')
-_UTC_OFFSET_RE = re.compile(r'^([+-])(\d{2}):?(\d{2})$')
+_UTC_OFFSET_RE = re.compile(r'^([+-])([01]\d|2[0-3]):?([0-5]\d)$')
 
 # The consumer's names for the map's columns. The package knows a parameter only as text
 # ('dc-5v-1-q300c5b44'). The WebApp repo knows that it is a camera, its model and its address.
@@ -87,18 +87,22 @@ def utc_iso(naive: str | None, utc_offset: str | None = None) -> str:
     stamp = _FOLDER_STAMP_RE.match(text)
     if stamp:
         text = '{}T{}:{}:{}'.format(*stamp.groups())
+    offset = str(utc_offset or '').strip()
+    offset = '+00:00' if offset.upper() in ('Z', 'UTC') else offset
+    # '' for each time that cannot be placed, as the docstring says: a year 1 or 9999, a time
+    # near 1970 on Windows, and an offset out of range each raised here and cost the run its page
     try:
         local = datetime.fromisoformat(text.replace(' ', 'T'))
-    except ValueError:
+        if local.tzinfo is None:
+            m = _UTC_OFFSET_RE.match(offset)
+            if m:
+                delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+                local = local.replace(tzinfo=timezone(delta if m.group(1) == '+' else -delta))
+            else:
+                local = local.astimezone()
+        return local.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+    except (ValueError, OSError, OverflowError):
         return ''
-    if local.tzinfo is None:
-        m = _UTC_OFFSET_RE.match(str(utc_offset or ''))
-        if m:
-            delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
-            local = local.replace(tzinfo=timezone(delta if m.group(1) == '+' else -delta))
-        else:
-            local = local.astimezone()
-    return local.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def time_html(naive: str | None, utc_offset: str | None, fallback: str, short: bool = False) -> str:
@@ -135,7 +139,9 @@ def _fallback_column(param: str) -> dict:
     """With no names from the consumer: the group is the parameter without its last part,
     and the label is the end of that last part ('dc-5v-1' and '5b44')."""
     head, _, tail = param.rpartition('-')
-    return {'group': head.upper(), 'label': tail[-4:] if len(tail) > 4 else tail, 'title': param}
+    # a serial ('q300c5b44') is named by its end, as people do; a word ('person') stays whole
+    short = tail[-4:] if len(tail) > 8 and any(ch.isdigit() for ch in tail) else tail
+    return {'group': head.upper(), 'label': short, 'title': param}
 
 
 def find_axis(records: Sequence[TestRecord], summary: Mapping[str, Any]) -> dict | None:
@@ -151,7 +157,10 @@ def find_axis(records: Sequence[TestRecord], summary: Mapping[str, Any]) -> dict
     for rec in records:
         param = param_of(rec.nodeid)
         if param:
-            rows.setdefault(function_of(rec.nodeid), {})[param] = rec
+            cells = rows.setdefault(function_of(rec.nodeid), {})
+            if param in cells:   # 2 browsers: a second record for the same cell, and the map has 1 square
+                return None
+            cells[param] = rec
     params = {p for cells in rows.values() for p in cells}
     if len(params) < 2 or len(params) > MAP_MAX_COLUMNS or len(rows) < 2:
         return None
@@ -166,11 +175,12 @@ def find_axis(records: Sequence[TestRecord], summary: Mapping[str, Any]) -> dict
     for param in params:
         meta = dict(_fallback_column(param))
         if isinstance(named.get(param), dict):
-            meta.update({k: str(v) for k, v in named[param].items() if v})
+            meta.update({k: str(named[param][k]) for k in ('group', 'label', 'title') if named[param].get(k)})
         columns.append({'param': param, **meta})
-    columns.sort(key=lambda c: (c['group'], [int(n) for n in re.findall(r'\d+', c['label'])] or [0], c['label']))
+    columns.sort(key=lambda c: (c['group'], [int(n) for n in re.findall(r'\d+', c['label'])] or [0], c['label'], c['param']))
     ordered = sorted(rows.items(), key=lambda kv: (next(iter(kv[1].values())).module_name, kv[0]))
-    return {'noun': str(given.get('noun') or 'variant'), 'columns': columns,
+    noun = given.get('noun')
+    return {'noun': noun if isinstance(noun, str) and noun else 'variant', 'columns': columns,
             'rows': [(next(iter(cells.values())).module_name, next(iter(cells.values())).display_title, cells)
                      for _fn, cells in ordered]}
 
@@ -292,7 +302,8 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
             evidence.append(_lab(f'Console errors ({len(console)})') + '<ul class="plain">' + ''.join(
                 f'<li><code>{escape(c)}</code></li>' for c in console[:20]) + '</ul>')
     for rel in rec.videos:
-        evidence.append(_lab('Video') + f'<video controls preload="none" src="{_href(rel)}"></video>')
+        evidence.append(_lab('Video') + f'<video controls preload="none" src="{_href(rel)}"></video>'
+                        f'<div><a href="{_href(rel)}">Video clip</a></div>')
     if failed and not rec.videos:
         evidence.append(_lab('Video') + '<p class="sub">No video kept for this test.</p>')
     if failed and not rec.traces:
@@ -312,7 +323,7 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
 
     # --- History
     history = []
-    strip = render_strip(rec.history, '../', links=links)
+    strip = render_strip(rec.history, '../', links=links, clock=True)
     history.append(strip or '<p class="sub">No earlier run of this test is in the archive.</p>')
     facts = []
     if rec.delta:
@@ -358,7 +369,9 @@ def _run_template(summary: Mapping[str, Any], run_dir: Path, product: str, targe
     if version and latest and latest != version:
         version += f' <span class="sub">(stable {latest} is out)</span>'
     groups = (
-        ('Run', [('Outcome', escape(exit_outcome(summary.get('exitstatus')))), ('Product', escape(product)),
+        ('Run', [('Outcome', escape(exit_outcome(summary.get('exitstatus')))),
+                 ('Exit code', escape(str(summary.get('exitstatus'))) if summary.get('exitstatus') is not None else ''),
+                 ('Product', escape(product)),
                  ('Target', escape(target)),
                  ('Started', time_html(started, offset, friendly_stamp(started))),
                  ('Ended', time_html(summary.get('ended'), offset, friendly_stamp(summary.get('ended')))
@@ -405,7 +418,7 @@ def _slowest_template(records: Sequence[TestRecord], ids: Mapping[str, int], axi
 
 
 def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Sequence[TestRecord],
-             summary: Mapping[str, Any]) -> tuple[str, str]:
+             summary: Mapping[str, Any], unknown: int = 0) -> tuple[str, str]:
     """The large line and the line under it."""
     from soterix_qa_shared.reporting.run_report import (
         DELTA_FIXED,
@@ -414,13 +427,13 @@ def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Seque
         PASSED_OUTCOMES,
         plural,
     )
-    total = failed + passed + skipped
+    total = failed + passed + skipped + unknown   # each row of the list: the tabs and the verdict agree
     if total == 0:
         return '<em class="tone-skip">No tests ran.</em>', ''
     if failed:
         big = (f'<em class="tone-fail">{failed} of {total} failed.</em> '
                f'{plural(causes, "cause", "causes")}.')
-    elif skipped:
+    elif skipped or unknown:
         big = f'<em class="tone-pass">{passed} of {total} passed.</em>'
     else:
         big = f'<em class="tone-pass">All {total} passed.</em>'
@@ -429,6 +442,11 @@ def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Seque
     counts = [p for p in (f'{passed} passed' if failed and passed else '', f'{skipped} skipped' if skipped else '') if p]
     if counts:
         parts.append(', '.join(counts) + '.')
+    errors = sum(1 for r in records if r.outcome == 'error')
+    if errors:
+        parts.append(plural(errors, 'failure is an error', 'failures are errors') + ': the test could not start.')
+    if unknown:
+        parts.append(plural(unknown, 'test has', 'tests have') + ' no recorded outcome.')
     changes = [(labels.count(DELTA_NEW_FAILURE), 'new failure', 'new failures'),
                (labels.count(DELTA_STILL_FAILING), 'still failing', 'still failing'),
                (labels.count(DELTA_FIXED), 'fixed', 'fixed')]
@@ -466,6 +484,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
         friendly_stamp,
         friendly_time,
         group_failures,
+        outcome_label,
         plural,
         run_href,
     )
@@ -488,7 +507,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
         counts[bucket(rec.outcome)] += 1
     failures = [r for r in records if r.outcome in FAILURE_OUTCOMES]
     groups = sorted(group_failures(failures), key=len, reverse=True)
-    big, sub = _verdict(counts['fail'], counts['pass'], counts['skip'], len(groups), records, summary)
+    big, sub = _verdict(counts['fail'], counts['pass'], counts['skip'], len(groups), records, summary, counts['unkn'])
 
     # --- causes
     noun = axis['noun'] if axis else ''
@@ -503,7 +522,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
         elif lead.seen is None:
             seen = '<span class="new">new</span>'
         else:
-            seen = 'since ' + time_html(lead.seen.get('started'), lead.seen.get('utc_offset'),
+            seen = 'last seen ' + time_html(lead.seen.get('started'), lead.seen.get('utc_offset'),
                                         friendly_time(lead.seen.get('started')), short=True)
         items = ''.join(
             f'<li role="button" tabindex="0" data-id="{ids[r.nodeid]}"><span class="g fail"></span>{escape(r.display_title)} '
@@ -542,7 +561,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                 if rec is None:
                     tds.append(f'<td{edge} data-col="{i}"></td>')
                     continue
-                tds.append(f'<td{edge} data-col="{i}"><button type="button" class="g {bucket(rec.outcome)}" '
+                tds.append(f'<td{edge} data-col="{i}" data-id="{ids[rec.nodeid]}"><button type="button" class="g {bucket(rec.outcome)}" '
                            f'data-id="{ids[rec.nodeid]}" aria-label="{escape(rec.outcome)}: {escape(col["title"], quote=True)}">'
                            '</button></td>')
             body.append(f'<tr><th>{escape(row_title)}</th>{"".join(tds)}</tr>')
@@ -557,7 +576,12 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
     # --- rows and pane templates
     has_run_log = (run_dir / 'log' / 'run.log').is_file()
     rows, templates, last_module = [], [], None
+    used_ids: set[str] = set()
     for rec in records:
+        row_id, n = rec.safe, ids[rec.nodeid]
+        while row_id in used_ids:   # a safe name that repeats, and a suffix that is itself a safe name
+            row_id, n = f'{rec.safe}-{n}', n + 1
+        used_ids.add(row_id)
         if rec.module_name != last_module:
             rows.append(f'<div class="modrow">{escape(rec.module_name)}</div>')
             last_module = rec.module_name
@@ -565,8 +589,9 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                                    rec.outcome, rec.delta, rec.product, column_name(axis, rec.nodeid)) if w).lower()
         right = ' · '.join(part for part in (rec.product if with_product else '', column_name(axis, rec.nodeid)) if part)
         rows.append(
-            f'<div class="row" role="button" tabindex="0" id="{escape(rec.safe, quote=True)}" data-id="{ids[rec.nodeid]}" '
-            f'data-o="{bucket(rec.outcome)}" data-test="{escape(key, quote=True)}"><span class="g {bucket(rec.outcome)}"></span>'
+            f'<div class="row" role="button" tabindex="0" id="{escape(row_id, quote=True)}" data-id="{ids[rec.nodeid]}" '
+            f'data-o="{bucket(rec.outcome)}" data-test="{escape(key, quote=True)}"><span class="g {bucket(rec.outcome)}" role="img" '
+            f'aria-label="{escape(outcome_label(rec.outcome), quote=True)}"></span>'
             f'<span class="t">{escape(rec.display_title)}</span><span class="m">{escape(rec.delta)}</span>'
             f'<span class="m">{escape(right)}</span><span class="m">{escape(rec.duration_text)}</span></div>')
         templates.append(_test_template(ids[rec.nodeid], rec, run_dir, links, axis, with_product, has_run_log))
@@ -591,7 +616,9 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
     else:
         compared = escape(delta_wording(None))
     advisories = [a for a in (summary.get('advisories') or []) if isinstance(a, dict)]
-    templates.append(_run_template(summary, run_dir, product, target, duration, str(started), file_links, compared, unattached))
+    run_template = _run_template(summary, run_dir, product, target, duration, str(started), file_links, compared, unattached)
+    templates.append(run_template)
+    pane_at_rest = run_template[len('<template id="t-run">'):-len('</template>')]
     templates.append(_notes_template(advisories))
     templates.append(_slowest_template(records, ids, axis, SLOWEST_COUNT))
 
@@ -635,7 +662,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 {causes_block}
 {map_block}
 <div><h2 id="list-h">Tests</h2><div id="list">{"".join(rows)}</div></div>
-</main><aside id="pane" aria-live="polite"></aside></div>
+</main><aside id="pane">{pane_at_rest}</aside></div>
 {"".join(templates)}
 <script>{RUN_PAGE_JS}</script>
 </body>
@@ -644,7 +671,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 
 
 RUN_PAGE_CSS = '''
-:root { --ink:#1b1d21; --dim:#6b7078; --rule:#d9dbe0; --bg:#fbfbfa; --fail:#b3261e; --skip:#9a7b1c; --pass:#2f7d4f; --sel:#efeee9; }
+:root { --ink:#1b1d21; --dim:#5f646c; --rule:#d9dbe0; --bg:#fbfbfa; --fail:#b3261e; --skip:#9a7b1c; --pass:#2f7d4f; --sel:#efeee9; }
 @media (prefers-color-scheme: dark) { :root { --ink:#e8e8e6; --dim:#9a9ea6; --rule:#33363c; --bg:#16171a; --fail:#ff8a80; --skip:#d9b64a; --pass:#6fcf97; --sel:#22242a; } }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 "Segoe UI",system-ui,sans-serif; }
@@ -684,6 +711,10 @@ h2 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(-
 .cause li, .row { padding:5px 6px; cursor:pointer; } .cause li:hover, .row:hover, .sel { background:var(--sel); }
 .g { display:inline-block; width:11px; height:11px; margin-right:8px; vertical-align:-1px; border:0; padding:0; background:transparent; }
 .g.fail { background:var(--fail); } .g.pass { background:var(--pass); opacity:.3; border-radius:50%; transform:scale(.55); }
+nav button:focus-visible, .panelinks button:focus-visible, .tabs button:focus-visible, #clock:focus-visible,
+#maptoggle:focus-visible, #close:focus-visible, #filter:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+.chip.flaky { color:var(--ink); font-weight:600; }
+body.noscroll { overflow:hidden; }
 .g.skip { box-shadow:inset 0 0 0 1.5px var(--skip); } .g.unkn { box-shadow:inset 0 0 0 1.5px var(--dim); border-radius:50%; }
 #mapline { margin:0 0 12px; font-size:14px; }
 #maptoggle { all:unset; cursor:pointer; font-size:12.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; border:1.5px solid var(--ink); padding:3px 10px; margin-left:10px; }
@@ -694,7 +725,7 @@ thead th { padding:0; } th.model { font-size:12px; font-weight:600; text-align:l
 th.cam { font:11.5px/1 ui-monospace,Consolas,monospace; color:var(--dim); font-weight:400; min-width:52px; padding:0 0 8px; text-align:center; cursor:default; }
 .edge { border-left:1px solid var(--rule); } .hot { background:var(--sel); } th.cam.hot { color:var(--ink); }
 tbody th { text-align:left; font-weight:400; padding:2px 18px 2px 0; max-width:520px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13.5px; }
-tbody td { padding:0; text-align:center; min-width:52px; height:22px; } td .g { margin:0; cursor:pointer; }
+tbody td { padding:0; text-align:center; min-width:52px; height:22px; } tbody td[data-id] { cursor:pointer; } td .g { margin:0; cursor:pointer; }
 td .g:hover, td .g.sel, td .g:focus-visible { outline:2px solid var(--ink); outline-offset:2px; background-clip:padding-box; }
 tr.mod td, .modrow { font:11px/1 ui-monospace,Consolas,monospace; color:var(--dim); padding:14px 0 4px; text-align:left; }
 tr.off, .off { display:none !important; }
@@ -721,7 +752,6 @@ ul.actions .err, ul.actions .log { display:block; padding-left:14px; } ul.action
 .history { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px; }
 .strip { display:inline-flex; gap:2px; } .blk { width:9px; height:14px; display:inline-block; background:var(--rule); }
 .blk.passed, .blk.xpassed { background:var(--pass); opacity:.55; } .blk.failed, .blk.error { background:var(--fail); } .blk.skipped, .blk.xfailed { background:var(--skip); opacity:.6; }
-.chip.flaky { color:var(--skip); }
 #close { display:none; }
 @media (max-width:1100px) {
   .wrap { grid-template-columns:1fr; } main { padding:18px 16px 60px; }
@@ -739,7 +769,8 @@ RUN_PAGE_JS = r'''
   var body = document.body, pane = $('#pane');
   var filter = body.getAttribute('data-first'), q = '', tab = 0, showAll = false, current = 't-run';
   var WORDS = {fail: 'failed', skip: 'were skipped', unkn: 'have no recorded outcome'};
-  var h24 = false;
+  var h24 = false, opener = null;
+  var baseTitle = document.title.replace(/Test Run - .*$/, 'Test Run - ');
   try { h24 = localStorage.getItem('clock') === '24'; } catch (err) { /* a private window: the 12 hour clock stays */ }
 
   function when(utc, short) {
@@ -755,6 +786,10 @@ RUN_PAGE_JS = r'''
   function clock() {
     var any = false;
     all('time[data-utc]').forEach(function (t) { var s = when(t.getAttribute('data-utc'), t.hasAttribute('data-short')); if (s) { t.textContent = s; any = true; } });
+    // the tooltips of a history strip, and the tab's title, are times too
+    all('#pane .blk[data-utc]').forEach(function (b) { var s = when(b.getAttribute('data-utc'), true); if (s) { b.title = s + ': ' + b.getAttribute('data-label'); } });
+    var head = $('h1 time[data-utc]'), stamp = head ? when(head.getAttribute('data-utc'), false) : null;
+    if (stamp) { document.title = baseTitle + stamp; }
     $('#clock').textContent = any ? (h24 ? '24 h' : '12 h') : '';
   }
   function show(id) {
@@ -772,7 +807,7 @@ RUN_PAGE_JS = r'''
     clock();
   }
   function tabs() {
-    all('#pane [data-tab]').forEach(function (b) { b.classList.toggle('on', Number(b.getAttribute('data-tab')) === tab); });
+    all('#pane [data-tab]').forEach(function (b) { var on = Number(b.getAttribute('data-tab')) === tab; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     all('#pane [data-tab-body]').forEach(function (s) { s.classList.toggle('on', Number(s.getAttribute('data-tab-body')) === tab); });
   }
   function list() {
@@ -808,23 +843,40 @@ RUN_PAGE_JS = r'''
   }
   function setFilter(f) {
     filter = f; showAll = false;
-    all('nav button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-f') === f); });
+    all('nav button').forEach(function (b) { var on = b.getAttribute('data-f') === f; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     list(); map();
+  }
+  // On a narrow screen the pane covers the page: the page behind does not scroll, the focus goes
+  // to Close, and it goes back to what opened the pane.
+  function openPane(from) {
+    pane.classList.add('open');
+    if (getComputedStyle(pane).position === 'fixed') {
+      opener = from || null; body.classList.add('noscroll');
+      var toClose = function () { var c = $('#close'); if (c && pane.classList.contains('open')) { c.focus(); } };
+      toClose();
+      // On a link to a test the browser puts the focus on the row AFTER this script ran, behind the pane.
+      if (document.readyState !== 'complete') { window.addEventListener('load', function () { setTimeout(toClose, 0); }, {once: true}); }
+    }
+  }
+  function closePane() {
+    pane.classList.remove('open'); body.classList.remove('noscroll');
+    if (opener && document.contains(opener)) { opener.focus(); } opener = null;
   }
   function act(target) {
     var el;
-    if (target.closest('#close')) { pane.classList.remove('open'); return true; }
+    if (target.closest('#close')) { closePane(); return true; }
     if (target.closest('#clock')) { h24 = !h24; try { localStorage.setItem('clock', h24 ? '24' : '12'); } catch (err) { /* not kept */ } clock(); return true; }
     if (target.closest('#maptoggle')) { showAll = !showAll; map(); return true; }
-    if ((el = target.closest('[data-pane]'))) { show(el.getAttribute('data-pane')); pane.classList.add('open'); return true; }
+    if ((el = target.closest('[data-pane]'))) { show(el.getAttribute('data-pane')); openPane(el); return true; }
     if ((el = target.closest('nav button'))) { setFilter(el.getAttribute('data-f')); return true; }
     if ((el = target.closest('[data-tab]'))) { tab = Number(el.getAttribute('data-tab')); tabs(); return true; }
-    if ((el = target.closest('[data-id]'))) { show('t' + el.getAttribute('data-id')); pane.classList.add('open'); return true; }
+    if ((el = target.closest('[data-id]'))) { show('t' + el.getAttribute('data-id')); openPane(el); return true; }
     return false;
   }
   document.addEventListener('click', function (ev) { act(ev.target); });
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape') { show('t-run'); pane.classList.remove('open'); }
+    // Escape in a filter box with text clears the box (the browser does it) and keeps the open test
+    if (ev.key === 'Escape' && !(ev.target.id === 'filter' && ev.target.value)) { show('t-run'); closePane(); }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('[role="button"]')) { ev.preventDefault(); act(ev.target); }
   });
   var table = $('#map table');
@@ -836,12 +888,18 @@ RUN_PAGE_JS = r'''
     });
   }
   $('#filter').addEventListener('input', function (ev) { q = ev.target.value.trim().toLowerCase(); list(); });
-  list(); map(); show('t-run');
-  // a link to one test (#<its safe name>) opens that test under its tab
-  var hash = '';
-  try { hash = decodeURIComponent(location.hash.slice(1)); } catch (err) { /* a hash that is not valid text opens nothing */ }
-  if (hash === 'advisories') { show('t-notes'); pane.classList.add('open'); }
-  var linked = hash ? document.getElementById(hash) : null;
-  if (linked && linked.hasAttribute('data-id')) { setFilter(linked.getAttribute('data-o')); show('t' + linked.getAttribute('data-id')); linked.scrollIntoView({block: 'center'}); }
+  setFilter(filter); show('t-run');   // setFilter, not list(): the open tab says aria-pressed from the start
+  // a link to one test (#<its row id>) opens that test under its tab, and #advisories opens the notes
+  function follow() {
+    var hash = '';
+    try { hash = decodeURIComponent(location.hash.slice(1)); } catch (err) { /* a hash that is not valid text opens nothing */ }
+    if (hash === 'advisories') { show('t-notes'); openPane(null); }
+    var linked = hash ? document.getElementById(hash) : null;
+    if (linked && linked.classList.contains('row')) {
+      setFilter(linked.getAttribute('data-o')); show('t' + linked.getAttribute('data-id')); openPane(linked); linked.scrollIntoView({block: 'center'});
+    }
+  }
+  follow();
+  window.addEventListener('hashchange', follow);
 })();
 '''
