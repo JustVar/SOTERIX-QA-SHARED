@@ -916,7 +916,7 @@ def _api_name(ev: dict) -> str:
 
 
 # A selector that names a secret field: input[name="password"], [type=password], #pwd, "Passcode".
-_SECRET_FIELD_RE = re.compile(r'pass|pwd|secret|token|otp', re.I)
+_SECRET_FIELD_RE = re.compile(r'pass|pwd|secret|token|otp', re.IGNORECASE)
 _TYPED_KEYS = ('text', 'value')
 
 
