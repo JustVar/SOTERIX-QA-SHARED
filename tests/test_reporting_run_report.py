@@ -748,7 +748,7 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     # The passed twin was fixed; the skipped twin is new.
     assert '<span class="m">Fixed</span>' in _row_of(page, rr._safe_name(TWIN_A, 120))
     assert '<span class="m">New test</span>' in _row_of(page, rr._safe_name(TWIN_B, 120))
-    assert '<div class="modrow">ui/c2c/test_cams.py</div>' in page
+    assert '<details class="modgroup" open><summary class="modrow">ui/c2c/test_cams.py <b></b></summary>' in page
     # The provenance in the Run details pane, the verdict, and the plain-language delta note.
     details = _named_template(page, 't-run')
     for fact in ('<span>Environment</span><span>QA</span>', '<span>Box</span><span>us</span>',
@@ -760,8 +760,17 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
     assert details.index('<span>Environment</span>') < details.index('<span>Box</span>') < details.index('<span>Tenant</span>')
     assert '<div><span>Box</span>us</div>' in page and '<div><span>Commit</span>abc1234</div>' in page
     assert '<p class="verdict"><em class="tone-fail">1 of 3 failed.</em> 1 cause.</p>' in page
-    assert '<p class="sub">1 passed, 1 skipped. 1 new failure, 1 fixed since the previous run.</p>' in page
-    assert re.search(r'Changes since the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html">'
+    # With a previous run the changes are the row of filters under the tabs, each with its count, and the
+    # second line of the verdict does not say them again.
+    assert '<p class="sub">1 passed, 1 skipped.</p>' in page
+    assert 'since the previous run.' not in page
+    changes = re.search(r'<div id="changes">.*?</div>', page, flags=re.DOTALL).group(0)
+    assert re.search(r'<span class="lab">Since the previous run, <time[^>]*>Aug 23, 10:00 AM</time></span>', changes)
+    assert re.findall(r'<button type="button" data-d="([^"]*)">([^<]*)<b>(\d+)</b></button>', changes) == [
+        ('New failure', 'New failures', '1'), ('Fixed', 'Fixed', '1'), ('New test', 'New tests', '1')]
+    assert '<a href="../2026-08-23_10-00-00__tests-ui-views/run.html">Open that run</a>' in changes
+    assert re.search(r'The labels New failure, Still failing, Fixed and New test compare this run with the '
+                     r'<a href="\.\./2026-08-23_10-00-00__tests-ui-views/run\.html">'
                      r'previous run of these tests</a>, <time[^>]*>Aug 23, 10:00 AM</time>\.', details)
     assert 'Change chips compare' not in page
     # The slowest list, longest first; each of its rows opens its test.
@@ -996,9 +1005,14 @@ def test_failures_with_one_error_share_a_group_and_say_seen_before(tmp_path):
                      r'<time data-utc="[^"]*" data-short>Aug 23, 10:00 AM</time></a>', history)
     assert 'New: no earlier run' in _tab(_template_of(page, SAFE), 2)
     # NODEID passed before (new failure), TWIN_B failed before (still
-    # failing), TWIN_A was not in the previous run (a new test, not a count).
+    # failing), TWIN_A was not in the previous run (a new test).
     assert '<p class="verdict"><em class="tone-fail">3 of 3 failed.</em> 2 causes.</p>' in page
-    assert '<p class="sub">1 new failure, 1 still failing since the previous run.</p>' in page
+    # The change counts are the filters under the tabs; the second line of the verdict has no sentence left.
+    changes = re.search(r'<div id="changes">.*?</div>', page, flags=re.DOTALL).group(0)
+    assert re.findall(r'<button type="button" data-d="([^"]*)">([^<]*)<b>(\d+)</b></button>', changes) == [
+        ('New failure', 'New failures', '1'), ('Still failing', 'Still failing', '1'), ('New test', 'New tests', '1')]
+    assert 'since the previous run.' not in page
+    assert '<p class="sub"></p>' in page
 
 
 # ---------------------------------------------------------------------------
@@ -1149,7 +1163,7 @@ def test_page_names_the_product_in_title_and_header(tmp_path, monkeypatch):
     _add_summary_tests(run, rows, {'env': 'qa', 'product': 'NexaiQ-Neurosen'})
     page = rr.build_run_report(run)
     assert '<title>NexaiQ-Neurosen - Test Run - Aug 24, 2026, 10:00 AM</title>' in page
-    assert '<h1>NexaiQ-Neurosen &middot; <time' in page
+    assert '<h1><span class="product">NexaiQ-Neurosen</span><time' in page
     details = _named_template(page, 't-run')
     assert '<span>Product</span><span>NexaiQ-Neurosen</span>' in details
     assert details.index('<span>Product</span>') < details.index('<span>Environment</span><span>QA</span>')
@@ -1174,7 +1188,7 @@ def test_mixed_run_names_the_product_on_every_test(tmp_path):
     _add_summary_tests(run, rows, {'product': 'Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core'})
     page = rr.build_run_report(run)
     assert '<title>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core - Test Run -' in page
-    assert '<h1>Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core &middot; ' in page
+    assert '<h1><span class="product">Mixed: NexaiQ-Camera 2 Cloud, NexaiQ-Core</span><time' in page
     assert '<span>Product</span><span>NexaiQ-Core</span>' in _tab(_template_of(page, SAFE), 3)
     assert '<span class="m">NexaiQ-Core</span>' in _row_of(page, SAFE)
     for twin in (TWIN_A, TWIN_B):
@@ -1261,7 +1275,7 @@ def test_history_and_delta_links_open_what_the_older_run_has(tmp_path):
     details = _named_template(page, 't-run')
     assert ('<a href="../2026-08-23_10-00-00__tests-ui-views/report.html">'
             'Previous run of these tests</a>') in details
-    assert re.search(r'Changes since the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
+    assert re.search(r'compare this run with the <a href="\.\./2026-08-23_10-00-00__tests-ui-views/report\.html">'
                      r'previous run of these tests</a>, '
                      r'<time data-utc="2026-08-23T04:30:00Z" data-short>Aug 23, 10:00 AM</time>', details)
     history = _tab(_template_of(page, SAFE), 2)
@@ -1400,7 +1414,7 @@ def test_compact_row_shows_short_id_and_keeps_the_full_one(tmp_path):
     assert full.lower() in re.search(r' data-test="([^"]*)"', row).group(1)
     assert '<img' not in row
     assert '<span>ui/views/test_x.py</span>' not in row   # the module heading above the row names it
-    assert page.count('<div class="modrow">ui/views/test_x.py</div>') == 1
+    assert page.count('<summary class="modrow">ui/views/test_x.py <b></b></summary>') == 1
     pane = _template_of(page, safe)
     assert f'<span>Node id</span><span><code>{full}</code></span>' in _tab(pane, 3)
     assert 'a "b"' not in page   # never raw: a quote would end the row's attribute

@@ -419,7 +419,7 @@ def _slowest_template(records: Sequence[TestRecord], ids: Mapping[str, int], axi
 
 
 def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Sequence[TestRecord],
-             summary: Mapping[str, Any], unknown: int = 0) -> tuple[str, str]:
+             summary: Mapping[str, Any], unknown: int = 0, with_changes: bool = True) -> tuple[str, str]:
     """The large line and the line under it."""
     from soterix_qa_shared.reporting.run_report import (
         DELTA_FIXED,
@@ -452,7 +452,7 @@ def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Seque
                (labels.count(DELTA_STILL_FAILING), 'still failing', 'still failing'),
                (labels.count(DELTA_FIXED), 'fixed', 'fixed')]
     detail = ', '.join(plural(n, one, many) for n, one, many in changes if n)
-    if detail:
+    if detail and with_changes:
         parts.append(detail[0].upper() + detail[1:] + ' since the previous run.')
     reruns = sum(1 for r in records if r.reruns and r.outcome in PASSED_OUTCOMES)
     if reruns:
@@ -476,6 +476,10 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                     previous: Mapping | None = None, product: str = '') -> str:
     from soterix_qa_shared.reporting.products import is_mixed
     from soterix_qa_shared.reporting.run_report import (
+        DELTA_FIXED,
+        DELTA_NEW_FAILURE,
+        DELTA_NEW_TEST,
+        DELTA_STILL_FAILING,
         FAILURE_OUTCOMES,
         SLOWEST_COUNT,
         RunLinks,
@@ -508,7 +512,9 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
         counts[bucket(rec.outcome)] += 1
     failures = [r for r in records if r.outcome in FAILURE_OUTCOMES]
     groups = sorted(group_failures(failures), key=len, reverse=True)
-    big, sub = _verdict(counts['fail'], counts['pass'], counts['skip'], len(groups), records, summary, counts['unkn'])
+    # with a previous run the change counts are the row of filters under the tabs, not a sentence
+    big, sub = _verdict(counts['fail'], counts['pass'], counts['skip'], len(groups), records, summary, counts['unkn'],
+                        with_changes=not previous)
 
     # --- causes
     noun = axis['noun'] if axis else ''
@@ -584,18 +590,37 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
             row_id, n = f'{rec.safe}-{n}', n + 1
         used_ids.add(row_id)
         if rec.module_name != last_module:
-            rows.append(f'<div class="modrow">{escape(rec.module_name)}</div>')
+            # a module is a group that folds: 370 passed tests were 1 long column (Justin, 09/21/2026)
+            rows.append(('</details>' if last_module is not None else '')
+                        + f'<details class="modgroup" open><summary class="modrow">{escape(rec.module_name)} <b></b></summary>')
             last_module = rec.module_name
         key = ' '.join(w for w in (rec.display_title, rec.nodeid, rec.case_key, rec.case_title, rec.module_name,
                                    rec.outcome, rec.delta, rec.product, column_name(axis, rec.nodeid)) if w).lower()
         right = ' · '.join(part for part in (rec.product if with_product else '', column_name(axis, rec.nodeid)) if part)
         rows.append(
             f'<div class="row" role="button" tabindex="0" id="{escape(row_id, quote=True)}" data-id="{ids[rec.nodeid]}" '
-            f'data-o="{bucket(rec.outcome)}" data-test="{escape(key, quote=True)}"><span class="g {bucket(rec.outcome)}" role="img" '
+            f'data-o="{bucket(rec.outcome)}" data-d="{escape(rec.delta, quote=True)}" data-test="{escape(key, quote=True)}"><span class="g {bucket(rec.outcome)}" role="img" '
             f'aria-label="{escape(outcome_label(rec.outcome), quote=True)}"></span>'
             f'<span class="t">{escape(rec.display_title)}</span><span class="m">{escape(rec.delta)}</span>'
             f'<span class="m">{escape(right)}</span><span class="m">{escape(rec.duration_text)}</span></div>')
         templates.append(_test_template(ids[rec.nodeid], rec, run_dir, links, axis, with_product, has_run_log))
+
+    if last_module is not None:
+        rows.append('</details>')
+
+    # --- the changes since the previous run, as filters. The link to the previous run only opened
+    # that run: it did not say what changed (Justin, 09/21/2026).
+    changes_html = ''
+    if previous:
+        labels = [r.delta for r in records]
+        buttons = ''.join(
+            f'<button type="button" data-d="{escape(label, quote=True)}">{escape(text)}<b>{labels.count(label)}</b></button>'
+            for label, text in ((DELTA_NEW_FAILURE, 'New failures'), (DELTA_STILL_FAILING, 'Still failing'),
+                                (DELTA_FIXED, 'Fixed'), (DELTA_NEW_TEST, 'New tests')) if labels.count(label))
+        since = time_html(previous.get('started'), previous.get('utc_offset'), friendly_time(previous.get('started')), short=True)
+        opened = f'<a href="{run_href(previous["name"], runs_dir, "../")}">Open that run</a>'
+        changes_html = (f'<div id="changes"><span class="lab">Since the previous run, {since}</span>'
+                        + (buttons or '<span class="sub">No test changed.</span>') + opened + '</div>')
 
     # --- run details, notes, slowest
     file_links = []
@@ -612,7 +637,8 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
         file_links.append(('Before', f'<a href="{run_href(previous["name"], runs_dir, "../")}">Previous run of these tests</a>'))
     file_links.append(('Folder', '<a href="./">Files of this run</a>'))
     if previous:
-        compared = (f'Changes since the <a href="{run_href(previous["name"], runs_dir, "../")}">previous run of these '
+        compared = (f'The labels New failure, Still failing, Fixed and New test compare this run with the '
+                    f'<a href="{run_href(previous["name"], runs_dir, "../")}">previous run of these '
                     f'tests</a>, {time_html(previous.get("started"), previous.get("utc_offset"), friendly_time(previous.get("started")), short=True)}.')
     else:
         compared = escape(delta_wording(None))
@@ -639,7 +665,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                   for key, label in tabs)
     nav += f'<button type="button" data-f="all"{" class=on" if first_tab == "all" else ""}>All<b>{len(records)}</b></button>'
 
-    heading = escape(product) + ' &middot; ' if product else ''
+    heading = f'<span class="product">{escape(product)}</span>' if product else ''
     return f'''<!doctype html>
 <html lang="en">
 <head>
@@ -658,11 +684,14 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 <div class="facts">{facts_html}<span class="panelinks"><button type="button" data-pane="t-run">Run details</button>
 <button type="button" data-pane="t-notes">Notes ({len(advisories)})</button>
 <button type="button" data-pane="t-slowest">Slowest {SLOWEST_COUNT}</button></span></div>
-<nav>{nav}<input id="filter" type="search" placeholder="Filter: title, node id, case key, module"
+<nav>{nav}<input id="filter" type="search" placeholder="Filter tests: title, case key, module" title="Press / to type here"
  aria-label="Filter tests"></nav>
+{changes_html}
 {causes_block}
 {map_block}
-<div><h2 id="list-h">Tests</h2><div id="list">{"".join(rows)}</div></div>
+<div><h2><span id="list-h">Tests</span><span class="listtools"><button type="button" data-fold="open">Expand all</button><button type="button" data-fold="shut">Collapse all</button></span></h2>
+<p id="nomatch" class="sub off"><span id="nomatch-text"></span> <button type="button" id="elsewhere"></button></p>
+<div id="list">{"".join(rows)}</div></div>
 </main><aside id="pane">{pane_at_rest}</aside></div>
 {"".join(templates)}
 <script>{RUN_PAGE_JS}</script>
@@ -682,6 +711,7 @@ main { padding:24px 32px 80px; min-width:0; }
 aside { border-left:1px solid var(--rule); padding:28px 24px 60px; position:sticky; top:0; height:100vh; overflow:auto; }
 .brand-row { display:flex; align-items:center; gap:12px; margin:0 0 8px; }
 .brand { display:block; }
+.product { display:block; font-size:24px; line-height:1.2; letter-spacing:0; text-transform:none; color:var(--ink); font-weight:700; margin:0 0 3px; }
 h1 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:0; font-weight:600; }
 .verdict { font-size:30px; line-height:1.2; font-weight:600; margin:0; }
 .verdict em { font-style:normal; }
@@ -713,7 +743,8 @@ h2 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(-
 .g { display:inline-block; width:11px; height:11px; margin-right:8px; vertical-align:-1px; border:0; padding:0; background:transparent; }
 .g.fail { background:var(--fail); } .g.pass { background:var(--pass); opacity:.3; border-radius:50%; transform:scale(.55); }
 nav button:focus-visible, .panelinks button:focus-visible, .tabs button:focus-visible, #clock:focus-visible,
-#maptoggle:focus-visible, #close:focus-visible, #filter:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+#maptoggle:focus-visible, #close:focus-visible, #filter:focus-visible, #changes button:focus-visible,
+.listtools button:focus-visible, #elsewhere:focus-visible, .modrow:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
 .chip.flaky { color:var(--ink); font-weight:600; }
 body.noscroll { overflow:hidden; }
 .g.skip { box-shadow:inset 0 0 0 1.5px var(--skip); } .g.unkn { box-shadow:inset 0 0 0 1.5px var(--dim); border-radius:50%; }
@@ -728,7 +759,19 @@ th.cam { font:11.5px/1 ui-monospace,Consolas,monospace; color:var(--dim); font-w
 tbody th { text-align:left; font-weight:400; padding:2px 18px 2px 0; max-width:520px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13.5px; }
 tbody td { padding:0; text-align:center; min-width:52px; height:22px; } tbody td[data-id] { cursor:pointer; } td .g { margin:0; cursor:pointer; }
 td .g:hover, td .g.sel, td .g:focus-visible { outline:2px solid var(--ink); outline-offset:2px; background-clip:padding-box; }
-tr.mod td, .modrow { font:11px/1 ui-monospace,Consolas,monospace; color:var(--dim); padding:14px 0 4px; text-align:left; }
+tr.mod td { font:11px/1 ui-monospace,Consolas,monospace; color:var(--dim); padding:14px 0 4px; text-align:left; }
+.modgroup { border-bottom:1px solid var(--rule); } .modgroup[open] { border-bottom:0; }
+.modrow { font:12px/1 ui-monospace,Consolas,monospace; color:var(--dim); padding:9px 0; cursor:pointer; list-style:none; display:flex; gap:10px; align-items:baseline; }
+.modrow::-webkit-details-marker { display:none; } .modrow::before { content:'+'; width:10px; color:var(--ink); } .modgroup[open] > .modrow::before { content:'-'; }
+.modrow b { color:var(--ink); font-weight:600; } .modrow:hover { color:var(--ink); }
+h2 { display:flex; align-items:baseline; gap:16px; } .listtools { margin-left:auto; display:flex; gap:14px; }
+.listtools button, #elsewhere { all:unset; cursor:pointer; font-size:12px; letter-spacing:0; text-transform:none; font-weight:400; color:var(--dim); border-bottom:1px dotted var(--dim); }
+.listtools button:hover, #elsewhere:hover { color:var(--ink); } #elsewhere:empty { display:none; } #elsewhere { color:var(--ink); font-size:13.5px; border-bottom:1.5px solid var(--ink); }
+#nomatch { margin:10px 0 0; font-size:14.5px; color:var(--ink); }
+#changes { display:flex; gap:20px; align-items:baseline; flex-wrap:wrap; padding:9px 0 0; font-size:13px; } #changes .lab { display:inline; }
+#changes button { all:unset; cursor:pointer; color:var(--dim); border-bottom:2px solid transparent; padding-bottom:2px; } #changes button b { color:var(--ink); margin-left:4px; }
+#changes button.on { color:var(--ink); border-bottom-color:var(--ink); } #changes a { margin-left:auto; color:var(--dim); }
+
 tr.off, .off { display:none !important; }
 .row { display:grid; grid-template-columns:20px minmax(0,1fr) auto auto 64px; gap:12px; border-bottom:1px solid var(--rule); font-size:14px; align-items:baseline; }
 .row .t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .row .m { color:var(--dim); font-size:12.5px; text-align:right; white-space:nowrap; }
@@ -768,8 +811,10 @@ RUN_PAGE_JS = r'''
   var $ = function (s) { return document.querySelector(s); };
   var all = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
   var body = document.body, pane = $('#pane');
-  var filter = body.getAttribute('data-first'), q = '', tab = 0, showAll = false, current = 't-run';
-  var WORDS = {fail: 'failed', skip: 'were skipped', unkn: 'have no recorded outcome'};
+  var filter = body.getAttribute('data-first'), q = '', delta = '', tab = 0, showAll = false, current = 't-run';
+  var NAMES = {fail: 'Failed', skip: 'Skipped', pass: 'Passed', unkn: 'Unknown', all: 'All'};
+  var FOLD_ABOVE = 40;   // a list longer than this opens with its modules folded
+  var WORDS = {fail: 'failed', skip: 'were skipped', pass: 'passed', unkn: 'have no recorded outcome'};
   var h24 = false, opener = null;
   var baseTitle = document.title.replace(/Test Run - .*$/, 'Test Run - ');
   try { h24 = localStorage.getItem('clock') === '24'; } catch (err) { /* a private window: the 12 hour clock stays */ }
@@ -811,27 +856,44 @@ RUN_PAGE_JS = r'''
     all('#pane [data-tab]').forEach(function (b) { var on = Number(b.getAttribute('data-tab')) === tab; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     all('#pane [data-tab-body]').forEach(function (s) { s.classList.toggle('on', Number(s.getAttribute('data-tab-body')) === tab); });
   }
+  function matches(r, anyTab) {
+    var inTab = delta ? r.getAttribute('data-d') === delta : (anyTab || filter === 'all' || r.getAttribute('data-o') === filter);
+    return inTab && (!q || r.getAttribute('data-test').indexOf(q) !== -1);
+  }
   function list() {
-    var shown = 0;
+    var shown = 0, elsewhere = 0, inTab = 0;
     all('#list .row').forEach(function (r) {
-      var hit = (filter === 'all' || r.getAttribute('data-o') === filter) && (!q || r.getAttribute('data-test').indexOf(q) !== -1);
-      r.classList.toggle('off', !hit); if (hit) { shown++; }
+      var hit = matches(r, false);
+      r.classList.toggle('off', !hit); if (hit) { shown++; } else if (q && !delta && matches(r, true)) { elsewhere++; }
+      if (delta ? r.getAttribute('data-d') === delta : (filter === 'all' || r.getAttribute('data-o') === filter)) { inTab++; }
     });
-    all('#list .modrow').forEach(function (m) {
-      var n = m.nextElementSibling, any = false;
-      while (n && !n.classList.contains('modrow')) { if (!n.classList.contains('off')) { any = true; } n = n.nextElementSibling; }
-      m.classList.toggle('off', !any);
+    // a module is a group that folds. A short list opens whole; a long one opens folded, each module with its count.
+    var open = !!q || shown <= FOLD_ABOVE;
+    all('#list .modgroup').forEach(function (g) {
+      var n = g.querySelectorAll('.row:not(.off)').length;
+      g.classList.toggle('off', !n); g.querySelector('summary b').textContent = n; g.open = open;
     });
-    $('#list-h').textContent = 'Tests: ' + shown;
+    $('#list-h').textContent = q ? 'Tests: ' + shown + ' of ' + inTab : 'Tests: ' + shown;
+    document.querySelector('.listtools').classList.toggle('off', shown === 0);
+    // say so when nothing is found, and where the word does match
+    var where = delta || NAMES[filter];
+    var text = '';
+    if (!shown && q) { text = 'No test under ' + where + ' matches "' + q + '".'; }
+    else if (!shown) { text = 'No test under ' + where + ' in this run.'; }
+    $('#nomatch-text').textContent = text;
+    $('#elsewhere').textContent = (!shown && elsewhere) ? elsewhere + (elsewhere === 1 ? ' test matches' : ' tests match') + ' under All: show' : '';
+    $('#nomatch').classList.toggle('off', !!shown);
     var causes = $('#causes');
-    if (causes) { causes.classList.toggle('off', !((filter === 'fail' || filter === 'all') && !q)); }
+    if (causes) { causes.classList.toggle('off', !((filter === 'fail' || filter === 'all') && !q && !delta)); }
   }
   function map() {
     if (!$('#map')) { return; }
-    var shown = 0, total = 0, narrow = WORDS[filter];
+    var shown = 0, total = 0, narrow = (q || delta) ? 'match' : WORDS[filter], visible = {};
+    all('#list .row:not(.off)').forEach(function (r) { visible[r.getAttribute('data-id')] = true; });
     all('#map tbody tr:not(.mod)').forEach(function (tr) {
       total++;
-      var on = showAll || !narrow || tr.querySelector('.g.' + filter);
+      var on = showAll || !narrow;
+      if (!on) { var cells = tr.querySelectorAll('button[data-id]'); for (var i = 0; i < cells.length && !on; i++) { on = !!visible[cells[i].getAttribute('data-id')]; } }
       tr.classList.toggle('off', !on); if (on) { shown++; }
     });
     all('#map tr.mod').forEach(function (m) {
@@ -839,11 +901,21 @@ RUN_PAGE_JS = r'''
       while (n && !n.classList.contains('mod')) { if (!n.classList.contains('off')) { any = true; } n = n.nextElementSibling; }
       m.classList.toggle('off', !any);
     });
-    $('#mapcount').textContent = shown < total ? 'Showing the ' + shown + ' tests that ' + narrow + ', of ' + total + '.' : 'Showing all ' + total + ' tests.';
+    // 1 test 'matches', 'was skipped', 'has no recorded outcome'; 'failed' and 'passed' are the same for 1 and for many
+    var one = {match: 'matches', 'were skipped': 'was skipped', 'have no recorded outcome': 'has no recorded outcome'};
+    var said = shown === 1 ? 'the 1 test that ' + (one[narrow] || narrow) : 'the ' + shown + ' tests that ' + narrow;
+    $('#mapcount').textContent = shown < total ? 'Showing ' + said + ', of ' + total + '.' : 'Showing all ' + total + ' tests.';
     $('#maptoggle').textContent = shown < total ? 'Show all ' + total : (showAll && narrow ? 'Show only the tests that ' + narrow : '');
   }
+  function setDelta(d) {   // the tests with 1 change label, whatever their outcome
+    delta = d; filter = 'all'; showAll = false;
+    all('nav button').forEach(function (b) { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
+    all('#changes button').forEach(function (b) { var on = b.getAttribute('data-d') === d; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+    list(); map();
+  }
   function setFilter(f) {
-    filter = f; showAll = false;
+    filter = f; delta = ''; showAll = false;
+    all('#changes button').forEach(function (b) { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
     all('nav button').forEach(function (b) { var on = b.getAttribute('data-f') === f; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     list(); map();
   }
@@ -870,6 +942,9 @@ RUN_PAGE_JS = r'''
     if (target.closest('#maptoggle')) { showAll = !showAll; map(); return true; }
     if ((el = target.closest('[data-pane]'))) { show(el.getAttribute('data-pane')); openPane(el); return true; }
     if ((el = target.closest('nav button'))) { setFilter(el.getAttribute('data-f')); return true; }
+    if ((el = target.closest('#changes button'))) { if (delta === el.getAttribute('data-d')) { setFilter(body.getAttribute('data-first')); } else { setDelta(el.getAttribute('data-d')); } return true; }
+    if (target.closest('#elsewhere')) { setFilter('all'); return true; }
+    if ((el = target.closest('[data-fold]'))) { all('#list .modgroup').forEach(function (g) { g.open = el.getAttribute('data-fold') === 'open'; }); return true; }
     if ((el = target.closest('[data-tab]'))) { tab = Number(el.getAttribute('data-tab')); tabs(); return true; }
     if ((el = target.closest('[data-id]'))) { show('t' + el.getAttribute('data-id')); openPane(el); return true; }
     return false;
@@ -879,6 +954,7 @@ RUN_PAGE_JS = r'''
     // Escape in a filter box with text clears the box (the browser does it) and keeps the open test
     if (ev.key === 'Escape' && !(ev.target.id === 'filter' && ev.target.value)) { show('t-run'); closePane(); }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('[role="button"]')) { ev.preventDefault(); act(ev.target); }
+    if (ev.key === '/' && !ev.target.matches('input, textarea')) { ev.preventDefault(); $('#filter').focus(); }
   });
   var table = $('#map table');
   if (table) {
@@ -888,7 +964,7 @@ RUN_PAGE_JS = r'''
       if (c) { all('[data-col="' + c.getAttribute('data-col') + '"]').forEach(function (x) { x.classList.add('hot'); }); }
     });
   }
-  $('#filter').addEventListener('input', function (ev) { q = ev.target.value.trim().toLowerCase(); list(); });
+  $('#filter').addEventListener('input', function (ev) { q = ev.target.value.trim().toLowerCase(); list(); map(); });
   setFilter(filter); show('t-run');   // setFilter, not list(): the open tab says aria-pressed from the start
   // a link to one test (#<its row id>) opens that test under its tab, and #advisories opens the notes
   function follow() {
@@ -897,7 +973,8 @@ RUN_PAGE_JS = r'''
     if (hash === 'advisories') { show('t-notes'); openPane(null); }
     var linked = hash ? document.getElementById(hash) : null;
     if (linked && linked.classList.contains('row')) {
-      setFilter(linked.getAttribute('data-o')); show('t' + linked.getAttribute('data-id')); openPane(linked); linked.scrollIntoView({block: 'center'});
+      setFilter(linked.getAttribute('data-o')); linked.closest('details').open = true;
+      show('t' + linked.getAttribute('data-id')); openPane(linked); linked.scrollIntoView({block: 'center'});
     }
   }
   follow();

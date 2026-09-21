@@ -630,8 +630,8 @@ def test_text_with_quotes_and_closing_tags_breaks_no_attribute_and_no_template(t
 def test_times_of_an_earlier_run_convert_with_that_runs_offset_never_this_machines(tmp_path):
     """The central pin of the 09/21/2026 audit. 2 runs of 1 target, each with its recorded offset. The page of
     the newer run stamps each time of the earlier run with the earlier run's offset: 'last seen' on the cause,
-    'Seen before' and the strip in the test's History tab, and 'Changes since' in Run details. The stamps are
-    exact, so the pin holds on a machine in each zone: a page built on a laptop showed box times 5 hours off."""
+    'Seen before' and the strip in the test's History tab, 'Compared with' in Run details, and the row of change
+    filters under the tabs. The stamps are exact, so the pin holds on a machine in each zone: a page built on a laptop showed box times 5 hours off."""
     nodeid = 'tests/ui/c2c/test_c.py::test_stream_opens[chromium]'
     error = 'AssertionError: the stream did not open'
     for name, started in (('2026-09-20_22-30-00__tests-ui', '2026-09-20T22:30:00'),
@@ -654,7 +654,9 @@ def test_times_of_an_earlier_run_convert_with_that_runs_offset_never_this_machin
             'data-label="Failed" title="Sep 20, 10:30 PM: Failed"></a>') in history
     assert ('<a class="blk failed" href="../2026-09-21_02-00-00__tests-ui/run.html" data-utc="2026-09-21T02:00:00Z" '
             'data-label="Failed" title="Sep 21, 2:00 AM: Failed"></a>') in history
-    assert f'Changes since the {link}previous run of these tests</a>, {earlier}.' in _named_template(page, 't-run')
+    assert (f'The labels New failure, Still failing, Fixed and New test compare this run with the {link}previous run '
+            f'of these tests</a>, {earlier}.') in _named_template(page, 't-run')
+    assert f'<div id="changes"><span class="lab">Since the previous run, {earlier}</span>' in _main_of(page)
     assert '<time data-utc="2026-09-21T02:00:00Z">Sep 21, 2026, 2:00 AM</time>' in _main_of(page)
     # No other stamp of the earlier day is on the page: a stamp by a different zone would be one.
     assert set(re.findall(r'data-utc="(2026-09-20[^"]*)"', page)) == {'2026-09-20T22:30:00Z'}
@@ -722,8 +724,8 @@ def test_the_row_glyph_and_the_map_square_say_the_outcome(tmp_path):
     page = _render(tmp_path, records)
     for outcome, css, label in (('failed', 'fail', 'Failed'), ('skipped', 'skip', 'Skipped'), ('passed', 'pass', 'Passed'),
                                 ('unknown', 'unkn', rr.outcome_label('unknown'))):
-        assert f'data-o="{css}" data-test=' in page
-        assert re.search(rf'data-o="{css}" data-test="[^"]*"><span class="g {css}" role="img" aria-label="{label}"></span>', page), outcome
+        assert f'data-o="{css}" data-d="" data-test=' in page
+        assert re.search(rf'data-o="{css}" data-d="" data-test="[^"]*"><span class="g {css}" role="img" aria-label="{label}"></span>', page), outcome
     cells = re.findall(r'<td(?: class="edge")? data-col="\d+" data-id="(\d+)"><button type="button" class="g \w+" data-id="(\d+)"', page)
     assert len(cells) == 4
     assert all(cell == button for cell, button in cells)
@@ -768,10 +770,199 @@ def test_the_style_shows_the_keyboard_focus():
     css = rp.RUN_PAGE_CSS
     rule = re.search(r'([^{}]*)\{ outline:2px solid var\(--ink\); outline-offset:2px; \}', css)
     assert rule
-    for selector in ('nav button', '.panelinks button', '.tabs button', '#clock', '#maptoggle', '#close', '#filter'):
+    for selector in ('nav button', '.panelinks button', '.tabs button', '#clock', '#maptoggle', '#close', '#filter',
+                     '#changes button', '.listtools button', '#elsewhere', '.modrow'):
         assert f'{selector}:focus-visible' in rule.group(1)
     assert css.count('--dim:#5f646c') == 1
     assert 'body.noscroll { overflow:hidden; }' in css
+
+
+# ---------------------------------------------------------------------------
+# The module groups, the change filters and the product
+# ---------------------------------------------------------------------------
+
+class _ListGroups(HTMLParser):
+    """The module groups of the list, as a parser nests them: the name and the rows of each
+    <details class="modgroup">, and each row that is in no group."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.groups: list[dict] = []
+        self.loose: list[dict] = []
+        self._details: list[dict | None] = []   # each open <details>: its group, or None for one that is no group
+        self._in_name = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'details':
+            group = {'name': '', 'open': 'open' in attrs, 'rows': []} if attrs.get('class') == 'modgroup' else None
+            if group is not None:
+                self.groups.append(group)
+            self._details.append(group)
+        elif tag == 'summary' and attrs.get('class') == 'modrow':
+            self._in_name = True
+        elif tag == 'div' and attrs.get('class') == 'row':
+            inside = [g for g in self._details if g is not None]
+            (inside[-1]['rows'] if inside else self.loose).append(attrs)
+
+    def handle_endtag(self, tag):
+        if tag == 'details' and self._details:
+            self._details.pop()
+        elif tag == 'summary':
+            self._in_name = False
+
+    def handle_data(self, data):
+        if self._in_name and self._details and self._details[-1] is not None:
+            self._details[-1]['name'] += data
+
+
+def _groups_of(page: str) -> _ListGroups:
+    groups = _ListGroups()
+    groups.feed(_outside_templates(page))
+    groups.close()
+    return groups
+
+
+PREVIOUS = {'name': '2026-09-20_22-30-00__tests-ui', 'started': '2026-09-20T22:30:00', 'utc_offset': '+00:00'}
+CHANGE_BUTTON_RE = r'<button type="button" data-d="([^"]*)">([^<]*)<b>(\d+)</b></button>'
+
+
+def _changes_of(page: str) -> str:
+    found = re.search(r'<div id="changes">.*?</div>', page, flags=re.DOTALL)
+    assert found, 'no #changes block'
+    return found.group(0)
+
+
+def _changed_records() -> list[rr.TestRecord]:
+    """6 tests: 1 new failure, 1 still failing, 2 fixed, 1 new test, and 1 with no change."""
+    facts = (('a', 'failed', rr.DELTA_NEW_FAILURE), ('b', 'failed', rr.DELTA_STILL_FAILING), ('c', 'passed', rr.DELTA_FIXED),
+             ('d', 'passed', rr.DELTA_FIXED), ('e', 'passed', rr.DELTA_NEW_TEST), ('f', 'passed', ''))
+    return [_rec(f'tests/ui/views/test_v.py::test_{name}[chromium]', outcome, delta=delta, signature=f'sig {name}',
+                 headline=f'error {name}') for name, outcome, delta in facts]
+
+
+def test_each_module_is_one_group_and_each_row_is_in_one(tmp_path):
+    """The list has 1 <details class="modgroup"> for each module, with the module in its <summary class="modrow">
+    and an empty <b> for the count that the script writes. Each row is inside the group of its module, and no row
+    is outside a group. Each group is open in the source: a reader with no script sees each row."""
+    modules = {'ui/alpha/test_a.py': 3, 'ui/beta/test_b.py': 1, 'ui/gamma/test_g.py': 2}
+    records = [_rec(f'tests/{module}::test_{n}[chromium]', 'failed' if n == 0 else 'passed')
+               for module, count in modules.items() for n in range(count)]
+    page = _render(tmp_path, list(reversed(records)))
+    found = _groups_of(page)
+    assert [(g['name'].strip(), len(g['rows'])) for g in found.groups] == list(modules.items())
+    assert all(g['open'] for g in found.groups)
+    assert found.loose == []
+    assert sum(len(g['rows']) for g in found.groups) == len(records)
+    for group in found.groups:
+        assert sorted(row['id'] for row in group['rows']) == sorted(r.safe for r in records if r.module_name == group['name'].strip())
+    for module in modules:
+        assert page.count(f'<details class="modgroup" open><summary class="modrow">{module} <b></b></summary>') == 1
+    # Each <details> that opens closes: the groups and the causes.
+    tags = _tags_of(_outside_templates(page))
+    assert sum(1 for tag, _a in tags.starts if tag == 'details') == tags.ends.count('details')
+    assert '<div class="modrow">' not in page
+    # The heading of the list has the 2 fold buttons, and the message for a list with no row starts hidden.
+    assert ('<h2><span id="list-h">Tests</span><span class="listtools"><button type="button" data-fold="open">Expand all'
+            '</button><button type="button" data-fold="shut">Collapse all</button></span></h2>') in page
+    assert '<p id="nomatch" class="sub off"><span id="nomatch-text"></span> <button type="button" id="elsewhere"></button></p>' in page
+
+
+def test_a_run_with_no_test_has_no_group(tmp_path):
+    """No record: the list is empty, and no <details> is left open or closed without its pair."""
+    page = _render(tmp_path, [])
+    assert '<div id="list"></div>' in page
+    assert 'modgroup' not in _outside_templates(page).replace(f'<style>{rp.RUN_PAGE_CSS}</style>', '').replace(
+        f'<script>{rp.RUN_PAGE_JS}</script>', '')
+
+
+def test_each_row_carries_its_change_label(tmp_path):
+    """data-d of a row is the change label of its test, '' for a test with none, and the text of it is escaped."""
+    records = _changed_records()
+    records[5].delta = 'x" onmouseover="alert(1)'
+    page = _render(tmp_path, records, previous=PREVIOUS)
+    rows = {row['id']: row for group in _groups_of(page).groups for row in group['rows']}
+    assert {r.safe: rows[r.safe]['data-d'] for r in records} == {r.safe: r.delta for r in records}
+    assert all('onmouseover' not in row for row in rows.values())
+    plain = _render(tmp_path / 'plain', [_rec('tests/a.py::test_a[chromium]')])
+    assert ' data-o="pass" data-d="" data-test="' in plain
+
+
+def test_with_no_previous_run_there_are_no_change_filters_and_the_second_line_says_the_changes(tmp_path):
+    """No previous run: no #changes block. The second line of the verdict keeps its sentence of change counts."""
+    page = _render(tmp_path, _changed_records())
+    assert 'id="changes"' not in page
+    assert '<p class="sub">4 passed. 1 new failure, 1 still failing, 2 fixed since the previous run.</p>' in page
+
+
+def test_with_a_previous_run_the_changes_are_filters_with_their_counts(tmp_path):
+    """A previous run: #changes is under the tabs and above the causes. It says when that run was, has 1 button for
+    each label that has tests, in the order New failures, Still failing, Fixed, New tests, each with its count, and
+    the second line of the verdict does not say the counts again."""
+    page = _render(tmp_path, _changed_records(), previous=PREVIOUS)
+    changes = _changes_of(page)
+    assert changes.startswith('<div id="changes"><span class="lab">Since the previous run, '
+                              '<time data-utc="2026-09-20T22:30:00Z" data-short>Sep 20, 10:30 PM</time></span><button ')
+    assert re.findall(CHANGE_BUTTON_RE, changes) == [
+        ('New failure', 'New failures', '1'), ('Still failing', 'Still failing', '1'), ('Fixed', 'Fixed', '2'),
+        ('New test', 'New tests', '1')]
+    assert changes.count('<button') == 4
+    assert 'No test changed.' not in page
+    assert '<p class="sub">4 passed.</p>' in page
+    assert 'since the previous run.' not in page
+    assert page.index('</nav>') < page.index('id="changes"') < page.index('id="causes"') < page.index('id="list"')
+    # A label with no test has no button.
+    records = [r for r in _changed_records() if r.delta in (rr.DELTA_FIXED, '')]
+    some = _changes_of(_render(tmp_path / 'some', records, previous=PREVIOUS))
+    assert re.findall(CHANGE_BUTTON_RE, some) == [('Fixed', 'Fixed', '2')]
+
+
+def test_with_a_previous_run_and_no_change_the_block_says_so(tmp_path):
+    """Each test has the outcome that it had: the block has no button, says 'No test changed.' and links the run."""
+    records = [_rec(f'tests/a.py::test_{name}[chromium]') for name in ('a', 'b')]
+    changes = _changes_of(_render(tmp_path, records, previous=PREVIOUS))
+    assert '<button' not in changes
+    assert ('</span><span class="sub">No test changed.</span>'
+            f'<a href="../{PREVIOUS["name"]}/run.html">Open that run</a></div>') in changes
+
+
+@pytest.mark.parametrize(('has', 'href'), [('run.html', 'run.html'), ('report.html', 'report.html'), (None, '')])
+def test_the_change_filters_link_the_page_that_the_previous_run_has(tmp_path, has, href):
+    """'Open that run' opens the previous run's run.html, its report.html when it has no run.html, and its folder
+    when it has neither. 'Compared with' in Run details links the same page."""
+    previous = tmp_path / PREVIOUS['name']
+    previous.mkdir()
+    if has:
+        (previous / has).write_text('x', encoding='utf-8')
+    page = _render(tmp_path, _changed_records(), previous=PREVIOUS)
+    target = f'../{PREVIOUS["name"]}/{href}'
+    assert _changes_of(page).endswith(f'<a href="{target}">Open that run</a></div>')
+    assert (f'The labels New failure, Still failing, Fixed and New test compare this run with the <a href="{target}">'
+            'previous run of these tests</a>, <time data-utc="2026-09-20T22:30:00Z" data-short>Sep 20, 10:30 PM</time>.'
+            ) in _named_template(page, 't-run')
+
+
+def test_the_product_is_a_span_in_the_heading_and_its_text_is_escaped(tmp_path):
+    """The product is <span class="product"> in the <h1>, before the date and the clock switch, in 24 px type.
+    Markup in the product shows as text. A run with no product has no span."""
+    records = [_rec('tests/a.py::test_a[chromium]')]
+    page = _render(tmp_path, records, {'started': '2026-09-21T05:25:54', 'utc_offset': '-05:00'}, product='<b>A & "B"</b>')
+    assert ('<h1><span class="product">&lt;b&gt;A &amp; &quot;B&quot;&lt;/b&gt;</span>'
+            '<time data-utc="2026-09-21T10:25:54Z">') in page
+    assert '&middot;' not in _main_of(page)[:_main_of(page).index('</h1>')]
+    heading = _main_of(page)[_main_of(page).index('<h1>'):_main_of(page).index('</h1>')]
+    assert heading.index('class="product"') < heading.index('<time') < heading.index('id="clock"')
+    assert re.search(r'\.product \{[^}]*font-size:24px;', rp.RUN_PAGE_CSS)
+    assert 'class="product"' not in _render(tmp_path / 'none', records)
+
+
+def test_the_filter_box_says_what_it_matches_and_its_key(tmp_path):
+    """The placeholder names what the box matches, and the tooltip names the key that puts the focus in it."""
+    box = next(attrs for tag, attrs in _tags_of(_render(tmp_path, [_rec('tests/a.py::test_a[chromium]')])).starts
+               if attrs.get('id') == 'filter')
+    assert box['placeholder'] == 'Filter tests: title, case key, module'
+    assert box['title'] == 'Press / to type here'
+    assert box['aria-label'] == 'Filter tests'
 
 
 # ---------------------------------------------------------------------------
@@ -1109,6 +1300,296 @@ def test_the_tab_key_shows_where_the_focus_is(tmp_path, chrome):
         assert focus_visible is True, kind
         assert style != 'none', kind
         assert width == '2px', kind
+    assert errors == []
+
+
+def _write_page(tmp_path: Path, records: list[rr.TestRecord], summary: dict | None = None, **kwargs) -> Path:
+    """The page of these records, written to run.html in a run folder."""
+    run = _run_dir(tmp_path)
+    (run / 'run.html').write_text(rp.render_run_page(run, summary or {}, {r.nodeid: r for r in records}, [], **kwargs),
+                                  encoding='utf-8')
+    return run / 'run.html'
+
+
+LONG_MODULES = ('ui/alpha/test_a.py', 'ui/beta/test_b.py', 'ui/gamma/test_g.py')
+
+
+def _long_run(tmp_path: Path) -> Path:
+    """60 passed tests, 20 in each of 3 modules, and 2 failed: 1 in the first module and 1 in the second.
+    'Stream' is in the title of 3 passed tests of the first module and 2 of the second."""
+    records = []
+    for module in LONG_MODULES:
+        for n in range(20):
+            word = 'Stream' if (module, n) in {(LONG_MODULES[0], 0), (LONG_MODULES[0], 1), (LONG_MODULES[0], 2),
+                                               (LONG_MODULES[1], 0), (LONG_MODULES[1], 1)} else 'Page'
+            records.append(_rec(f'tests/{module}::test_{n:02d}[chromium]', title=f'{word} check {n:02d}'))
+    for module in LONG_MODULES[:2]:
+        records.append(_rec(f'tests/{module}::test_broken[chromium]', 'failed', title='Login breaks',
+                            signature=f'sig {module}', headline=f'assert in {module}'))
+    return _write_page(tmp_path, records, {'exitstatus': 1})
+
+
+# Each group that shows: the module, the count in its summary, and if it is open.
+GROUPS = ("() => [...document.querySelectorAll('#list .modgroup')].filter(g => !g.classList.contains('off'))"
+          ".map(g => [g.querySelector('summary').firstChild.textContent.trim(), g.querySelector('summary b').textContent, g.open])")
+HIDDEN_GROUPS = "() => [...document.querySelectorAll('#list .modgroup.off')].map(g => g.querySelector('summary').firstChild.textContent.trim())"
+VISIBLE_ROW_IDS = "() => [...document.querySelectorAll('#list .row')].filter(r => !r.classList.contains('off')).map(r => r.id)"
+NAV_STATE = "() => [...document.querySelectorAll('nav button')].map(b => [b.dataset.f, b.classList.contains('on'), b.getAttribute('aria-pressed')])"
+
+
+def test_a_long_list_opens_folded_and_a_short_one_opens_whole(tmp_path, chrome):
+    """62 tests in 3 modules. The Failed tab has 2 rows, so its groups are open. The Passed tab has 60, so each
+    group is folded with its count in the summary. A click on a summary opens that group alone; 'Expand all' and
+    'Collapse all' open and fold each one. A word in the filter box opens the groups that have a match, hides the
+    group that has none, and the heading reads 'Tests: N of M'. With the box empty again the list folds again."""
+    open_page, errors = chrome
+    page = open_page(_long_run(tmp_path).as_uri())
+    alpha, beta, gamma = LONG_MODULES
+    assert page.evaluate(GROUPS) == [[alpha, '1', True], [beta, '1', True]]
+    assert page.evaluate(HIDDEN_GROUPS) == [gamma]
+    assert page.text_content('#list-h') == 'Tests: 2'
+    assert page.locator('#list .row:visible').count() == 2
+    # Passed: 60 rows is more than the limit of the script, so each group is folded.
+    assert 'var FOLD_ABOVE = 40;' in rp.RUN_PAGE_JS
+    page.click('nav button[data-f="pass"]')
+    assert page.evaluate(GROUPS) == [[alpha, '20', False], [beta, '20', False], [gamma, '20', False]]
+    assert page.text_content('#list-h') == 'Tests: 60'
+    assert page.locator('#list .row:visible').count() == 0
+    assert page.is_visible('.listtools')
+    # A click on 1 summary opens that group, and a second click folds it.
+    page.click('#list .modgroup >> nth=1 >> summary')
+    assert page.evaluate(GROUPS) == [[alpha, '20', False], [beta, '20', True], [gamma, '20', False]]
+    assert page.locator('#list .row:visible').count() == 20
+    page.click('#list .modgroup >> nth=1 >> summary')
+    assert [g[2] for g in page.evaluate(GROUPS)] == [False, False, False]
+    # The 2 buttons of the heading.
+    page.click('[data-fold="open"]')
+    assert [g[2] for g in page.evaluate(GROUPS)] == [True, True, True]
+    assert page.locator('#list .row:visible').count() == 60
+    page.click('[data-fold="shut"]')
+    assert [g[2] for g in page.evaluate(GROUPS)] == [False, False, False]
+    assert page.locator('#list .row:visible').count() == 0
+    # A word: the groups with a match open, each with the count of its matches.
+    page.fill('#filter', 'stream')
+    assert page.evaluate(GROUPS) == [[alpha, '3', True], [beta, '2', True]]
+    assert page.evaluate(HIDDEN_GROUPS) == [gamma]
+    assert page.text_content('#list-h') == 'Tests: 5 of 60'
+    assert page.locator('#list .row:visible').count() == 5
+    # A word that matches more rows than the limit opens the groups too: the reader asked for those rows.
+    page.fill('#filter', 'check')
+    assert page.evaluate(GROUPS) == [[alpha, '20', True], [beta, '20', True], [gamma, '20', True]]
+    assert page.text_content('#list-h') == 'Tests: 60 of 60'
+    page.fill('#filter', '')
+    assert page.evaluate(GROUPS) == [[alpha, '20', False], [beta, '20', False], [gamma, '20', False]]
+    assert page.text_content('#list-h') == 'Tests: 60'
+    # All: 62 rows, folded, and the count of a group is its passed tests and its failed test.
+    page.click('nav button[data-f="all"]')
+    assert page.evaluate(GROUPS) == [[alpha, '21', False], [beta, '21', False], [gamma, '20', False]]
+    # A tab with no test says so, and has no fold buttons.
+    page.click('nav button[data-f="skip"]')
+    assert page.evaluate(GROUPS) == []
+    assert page.inner_text('#nomatch-text') == 'No test under Skipped in this run.'
+    assert page.is_hidden('#elsewhere')
+    assert page.is_hidden('.listtools')
+    assert errors == []
+
+
+@pytest.mark.parametrize(('count', 'is_open'), [(40, True), (41, False)])
+def test_the_list_folds_above_40_rows(tmp_path, chrome, count, is_open):
+    """A list of 40 rows opens whole. A list of 41 opens folded."""
+    open_page, errors = chrome
+    records = [_rec(f'tests/ui/m{n % 2}/test_m.py::test_{n:02d}[chromium]') for n in range(count)]
+    page = open_page(_write_page(tmp_path, records).as_uri())
+    assert page.text_content('#list-h') == f'Tests: {count}'
+    assert {g[2] for g in page.evaluate(GROUPS)} == {is_open}
+    assert errors == []
+
+
+def test_a_link_to_a_test_in_a_folded_group_opens_its_group(tmp_path, chrome):
+    """A link to '#<row id>' of a passed test of the long run: the Passed tab is folded, and the group of that
+    row opens so that the row shows."""
+    open_page, errors = chrome
+    path = _long_run(tmp_path)
+    safe = rr._safe_name(f'tests/{LONG_MODULES[1]}::test_07[chromium]', 120)
+    page = open_page(f'{path.as_uri()}#{safe}')
+    assert page.inner_text('#pane h3') == 'Page check 07'
+    assert [g[2] for g in page.evaluate(GROUPS)] == [False, True, False]
+    assert page.is_visible(f'[id="{safe}"]')
+    # A new hash on the open page: the list folds again for the tab, and the group of the new row opens.
+    # (On a load, Chrome opens a <details> round the target of the link by itself. Here the script must.)
+    other = rr._safe_name(f'tests/{LONG_MODULES[2]}::test_11[chromium]', 120)
+    page.evaluate('(id) => { location.hash = "#" + id; }', other)
+    page.wait_for_function("() => document.querySelector('#pane h3').textContent === 'Page check 11'")
+    assert [g[2] for g in page.evaluate(GROUPS)] == [False, False, True]
+    assert page.is_visible(f'[id="{other}"]')
+    assert errors == []
+
+
+def test_a_word_with_no_match_says_so_and_says_where_it_does_match(tmp_path, chrome):
+    """On the Failed tab. A word that no test has: the message, and no button. A word that only passed tests
+    have: the message, and a button with their count that opens the All tab with those tests listed. With the
+    box empty again the message is gone."""
+    open_page, errors = chrome
+    path, _records = _browser_run(tmp_path)
+    page = open_page(path.as_uri())
+    assert page.is_hidden('#nomatch')
+    page.fill('#filter', 'Zebra')
+    assert page.evaluate(VISIBLE_ROWS) == []
+    assert page.is_visible('#nomatch')
+    assert page.inner_text('#nomatch-text') == 'No test under Failed matches "zebra".'
+    assert page.text_content('#elsewhere') == ''
+    assert page.is_hidden('#elsewhere')
+    assert page.text_content('#list-h') == 'Tests: 0 of 2'
+    assert page.is_hidden('.listtools')
+    # 1 passed test has this text in its node id.
+    page.fill('#filter', 'test_c[bc')
+    assert page.inner_text('#nomatch-text') == 'No test under Failed matches "test_c[bc".'
+    assert page.inner_text('#elsewhere') == '1 test matches under All: show'
+    # 'Reboot works' passed on each of the 3 cameras.
+    page.fill('#filter', 'reboot')
+    assert page.evaluate(VISIBLE_ROWS) == []
+    assert page.inner_text('#nomatch-text') == 'No test under Failed matches "reboot".'
+    assert page.is_visible('#elsewhere')
+    assert page.inner_text('#elsewhere') == '3 tests match under All: show'
+    page.click('#elsewhere')
+    assert page.evaluate(NAV_STATE) == [['fail', False, 'false'], ['skip', False, 'false'], ['pass', False, 'false'],
+                                        ['all', True, 'true']]
+    assert page.evaluate(VISIBLE_ROWS) == ['pass', 'pass', 'pass']
+    assert page.input_value('#filter') == 'reboot'
+    assert page.text_content('#list-h') == 'Tests: 3 of 9'
+    assert page.is_hidden('#nomatch')
+    assert page.is_visible('.listtools')
+    # Back on Failed with the word still in the box, then the box empty: the message goes.
+    page.click('nav button[data-f="fail"]')
+    assert page.is_visible('#nomatch')
+    page.fill('#filter', '')
+    assert page.is_hidden('#nomatch')
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    assert page.text_content('#list-h') == 'Tests: 2'
+    assert errors == []
+
+
+def test_the_slash_key_puts_the_focus_in_the_filter_box(tmp_path, chrome):
+    """'/' on the page puts the focus in the filter box and types no slash into it. In the box, '/' is a character."""
+    open_page, errors = chrome
+    path, _records = _browser_run(tmp_path)
+    page = open_page(path.as_uri())
+    assert page.evaluate(ACTIVE_ID) != 'filter'
+    page.keyboard.press('/')
+    assert page.evaluate(ACTIVE_ID) == 'filter'
+    assert page.input_value('#filter') == ''
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    page.keyboard.type('c2c/test')
+    assert page.input_value('#filter') == 'c2c/test'
+    assert page.evaluate(ACTIVE_ID) == 'filter'
+    # From a row too: the focus moves, and the row does not open.
+    page.fill('#filter', '')
+    page.focus('#list .row[data-o="fail"] >> nth=0')
+    page.keyboard.press('/')
+    assert page.evaluate(ACTIVE_ID) == 'filter'
+    assert page.input_value('#filter') == ''
+    assert page.inner_text('#pane h3') == 'Run details'
+    assert errors == []
+
+
+def _changes_run(tmp_path: Path) -> tuple[Path, list[rr.TestRecord]]:
+    """The run of _browser_run with a previous run: the first failure is new, the second is still failing,
+    'Stream opens' on the third camera and 'Reboot works' on the first were fixed, and 1 test is new."""
+    _path, records = _browser_run(tmp_path / 'base')
+    labels = {0: rr.DELTA_NEW_FAILURE, 1: rr.DELTA_STILL_FAILING, 2: rr.DELTA_FIXED, 6: rr.DELTA_FIXED, 8: rr.DELTA_NEW_TEST}
+    for index, label in labels.items():
+        records[index].delta = label
+    return _write_page(tmp_path, records, {'exitstatus': 1}, previous=PREVIOUS), records
+
+
+CHANGE_STATE = "() => [...document.querySelectorAll('#changes button')].map(b => [b.dataset.d, b.classList.contains('on'), b.getAttribute('aria-pressed')])"
+
+
+def test_a_change_filter_lists_the_tests_with_that_label_whatever_their_outcome(tmp_path, chrome):
+    """On the Failed tab, 'Fixed' lists the 2 fixed tests, which passed: no tab is on, the causes hide and the
+    map narrows to their rows. A second click on 'Fixed' opens the first tab again. A click on a tab clears the
+    change filter."""
+    open_page, errors = chrome
+    path, records = _changes_run(tmp_path)
+    page = open_page(path.as_uri())
+    assert [(d, text) for d, text in page.evaluate(
+        "() => [...document.querySelectorAll('#changes button')].map(b => [b.dataset.d, b.textContent])")] == [
+        ('New failure', 'New failures1'), ('Still failing', 'Still failing1'), ('Fixed', 'Fixed2'), ('New test', 'New tests1')]
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    assert page.is_visible('#causes')
+    fixed = sorted(r.safe for r in records if r.delta == rr.DELTA_FIXED)
+    page.click('#changes button[data-d="Fixed"]')
+    assert sorted(page.evaluate(VISIBLE_ROW_IDS)) == fixed
+    assert page.evaluate(VISIBLE_ROWS) == ['pass', 'pass']
+    assert page.text_content('#list-h') == 'Tests: 2'
+    assert page.evaluate(NAV_STATE) == [[f, False, 'false'] for f in ('fail', 'skip', 'pass', 'all')]
+    assert page.evaluate(CHANGE_STATE) == [['New failure', False, 'false'], ['Still failing', False, 'false'],
+                                           ['Fixed', True, 'true'], ['New test', False, 'false']]
+    assert page.is_hidden('#causes')
+    assert page.evaluate(VISIBLE_MAP_ROWS) == 2   # 'Stream opens' and 'Reboot works'
+    assert re.fullmatch(r'Showing the 2 tests that match, of 3\.', page.inner_text('#mapcount'))
+    # A different change: the button that is on moves.
+    page.click('#changes button[data-d="New failure"]')
+    assert page.evaluate(VISIBLE_ROW_IDS) == [records[0].safe]
+    assert [state[1] for state in page.evaluate(CHANGE_STATE)] == [True, False, False, False]
+    # The same button again: the first tab of the page is back.
+    page.click('#changes button[data-d="Fixed"]')
+    page.click('#changes button[data-d="Fixed"]')
+    assert page.evaluate(NAV_STATE) == [['fail', True, 'true'], ['skip', False, 'false'], ['pass', False, 'false'],
+                                        ['all', False, 'false']]
+    assert all(state[1:] == [False, 'false'] for state in page.evaluate(CHANGE_STATE))
+    assert page.evaluate(VISIBLE_ROWS) == ['fail', 'fail']
+    assert page.is_visible('#causes')
+    # A tab after a change filter clears the change filter.
+    page.click('#changes button[data-d="Fixed"]')
+    assert page.evaluate(VISIBLE_ROWS) == ['pass', 'pass']
+    page.click('nav button[data-f="pass"]')
+    assert all(state[1:] == [False, 'false'] for state in page.evaluate(CHANGE_STATE))
+    assert page.get_attribute('nav button[data-f="pass"]', 'aria-pressed') == 'true'
+    assert page.evaluate(VISIBLE_ROWS) == ['pass'] * 6
+    # The word in the box narrows a change filter too, and a word with no match names the change.
+    page.click('#changes button[data-d="Fixed"]')
+    page.fill('#filter', 'reboot')
+    assert page.evaluate(VISIBLE_ROW_IDS) == [records[6].safe]
+    assert page.text_content('#list-h') == 'Tests: 1 of 2'
+    page.fill('#filter', 'snapshot')
+    assert page.inner_text('#nomatch-text') == 'No test under Fixed matches "snapshot".'
+    assert page.is_hidden('#elsewhere')
+    assert page.get_attribute('#changes a', 'href') == f'../{PREVIOUS["name"]}/run.html'
+    assert errors == []
+
+
+def test_the_word_in_the_filter_box_narrows_the_map_too(tmp_path, chrome):
+    """On the All tab the map shows each of its 3 rows. A word that 1 test has: the map shows the row of that
+    test alone and says 'that match'. 'Show all 3' shows each row again, and the box empty does too."""
+    open_page, errors = chrome
+    path, records = _browser_run(tmp_path)
+    page = open_page(path.as_uri())
+    page.click('nav button[data-f="all"]')
+    assert page.evaluate(VISIBLE_MAP_ROWS) == 3
+    assert page.inner_text('#mapcount') == 'Showing all 3 tests.'
+    skipped = records[4]   # 'Snapshot saves' on the second camera
+    page.fill('#filter', f'test_b[{CAMERAS[1]}')
+    assert page.evaluate(VISIBLE_ROW_IDS) == [skipped.safe]
+    shown = "() => [...document.querySelectorAll('#map tbody tr:not(.mod)')].filter(r => !r.classList.contains('off')).map(r => r.querySelector('th').textContent)"
+    assert page.evaluate(shown) == ['Snapshot saves']
+    assert re.fullmatch(r'Showing the 1 tests? that match(es)?, of 3\.', page.inner_text('#mapcount'))
+    assert page.inner_text('#maptoggle').lower() == 'show all 3'
+    page.click('#maptoggle')
+    assert page.evaluate(VISIBLE_MAP_ROWS) == 3
+    assert page.inner_text('#mapcount') == 'Showing all 3 tests.'
+    assert page.inner_text('#maptoggle').lower() == 'show only the tests that match'
+    assert page.evaluate(VISIBLE_ROW_IDS) == [skipped.safe]   # the list keeps the word
+    page.click('#maptoggle')
+    assert page.evaluate(shown) == ['Snapshot saves']
+    # On the Failed tab a word narrows the rows of that tab: 'Stream opens' failed on the first camera.
+    page.click('nav button[data-f="fail"]')
+    page.fill('#filter', CAMERAS[0])
+    assert page.evaluate(VISIBLE_ROW_IDS) == [records[0].safe]
+    assert page.evaluate(shown) == ['Stream opens']
+    page.fill('#filter', '')
+    assert page.evaluate(VISIBLE_MAP_ROWS) == 1
+    assert re.fullmatch(r'Showing the 1 tests? that failed, of 3\.', page.inner_text('#mapcount'))
     assert errors == []
 
 
