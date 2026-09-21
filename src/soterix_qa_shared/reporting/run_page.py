@@ -100,7 +100,8 @@ def utc_iso(naive: str | None, utc_offset: str | None = None) -> str:
                 local = local.replace(tzinfo=timezone(delta if m.group(1) == '+' else -delta))
             else:
                 local = local.astimezone()
-        return local.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        # isoformat, not strftime: %Y gives '1' for the year 1 on Linux and '0001' on Windows
+        return local.astimezone(UTC).replace(tzinfo=None).isoformat(timespec='seconds') + 'Z'
     except (ValueError, OSError, OverflowError):
         return ''
 
