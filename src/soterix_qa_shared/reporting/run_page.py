@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from soterix_qa_shared.qatouch.mapping import canonical_nodeid
 from soterix_qa_shared.reporting.branding import favicon_link, header_logo
+from soterix_qa_shared.reporting.run_report import _OUTCOME_RANK
 
 if TYPE_CHECKING:
     from soterix_qa_shared.reporting.run_report import RunLinks, TestRecord
@@ -159,9 +160,11 @@ def find_axis(records: Sequence[TestRecord], summary: Mapping[str, Any]) -> dict
         param = param_of(rec.nodeid)
         if param:
             cells = rows.setdefault(function_of(rec.nodeid), {})
-            if param in cells:   # 2 browsers: a second record for the same cell, and the map has 1 square
-                return None
-            cells[param] = rec
+            # A cell can be claimed twice: 2 browsers, or 1 node id spelled with and without its
+            # xdist '@group' in 2 of the sources. Returning None here removed the whole map with no
+            # word to the reader (audit 09/22/2026). The worse outcome wins the square.
+            if param not in cells or _OUTCOME_RANK.get(rec.outcome, 0) > _OUTCOME_RANK.get(cells[param].outcome, 0):
+                cells[param] = rec
     params = {p for cells in rows.values() for p in cells}
     if len(params) < 2 or len(params) > MAP_MAX_COLUMNS or len(rows) < 2:
         return None
@@ -812,6 +815,7 @@ RUN_PAGE_JS = r'''
   var all = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
   var body = document.body, pane = $('#pane');
   var filter = body.getAttribute('data-first'), q = '', delta = '', tab = 0, showAll = false, current = 't-run';
+  var fold = null;   // null = the default for this list's length; true/false = what the reader chose
   var NAMES = {fail: 'Failed', skip: 'Skipped', pass: 'Passed', unkn: 'Unknown', all: 'All'};
   var FOLD_ABOVE = 40;   // a list longer than this opens with its modules folded
   var WORDS = {fail: 'failed', skip: 'were skipped', pass: 'passed', unkn: 'have no recorded outcome'};
@@ -867,11 +871,14 @@ RUN_PAGE_JS = r'''
       r.classList.toggle('off', !hit); if (hit) { shown++; } else if (q && !delta && matches(r, true)) { elsewhere++; }
       if (delta ? r.getAttribute('data-d') === delta : (filter === 'all' || r.getAttribute('data-o') === filter)) { inTab++; }
     });
-    // a module is a group that folds. A short list opens whole; a long one opens folded, each module with its count.
-    var open = !!q || shown <= FOLD_ABOVE;
+    // A module is a group that folds. A short list opens whole; a long one opens folded, each module
+    // with its count. `fold` holds a choice the reader made with Expand all or Collapse all, and it
+    // survives until the tab or the typed word changes (audit 09/22/2026: every keystroke undid it).
+    var open = fold === null ? (!!q || shown <= FOLD_ABOVE) : fold;
     all('#list .modgroup').forEach(function (g) {
       var n = g.querySelectorAll('.row:not(.off)').length;
-      g.classList.toggle('off', !n); g.querySelector('summary b').textContent = n; g.open = open;
+      g.classList.toggle('off', !n); g.querySelector('summary b').textContent = n;
+      if (fold !== null || g.open !== open) { g.open = open; }
     });
     $('#list-h').textContent = q ? 'Tests: ' + shown + ' of ' + inTab : 'Tests: ' + shown;
     document.querySelector('.listtools').classList.toggle('off', shown === 0);
@@ -908,12 +915,14 @@ RUN_PAGE_JS = r'''
     $('#maptoggle').textContent = shown < total ? 'Show all ' + total : (showAll && narrow ? 'Show only the tests that ' + narrow : '');
   }
   function setDelta(d) {   // the tests with 1 change label, whatever their outcome
+    if (d !== delta) { fold = null; }
     delta = d; filter = 'all'; showAll = false;
     all('nav button').forEach(function (b) { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
     all('#changes button').forEach(function (b) { var on = b.getAttribute('data-d') === d; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     list(); map();
   }
   function setFilter(f) {
+    if (f !== filter || delta) { fold = null; }   // a new view returns to the default; the same tab keeps the reader's choice
     filter = f; delta = ''; showAll = false;
     all('#changes button').forEach(function (b) { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
     all('nav button').forEach(function (b) { var on = b.getAttribute('data-f') === f; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
@@ -944,7 +953,8 @@ RUN_PAGE_JS = r'''
     if ((el = target.closest('nav button'))) { setFilter(el.getAttribute('data-f')); return true; }
     if ((el = target.closest('#changes button'))) { if (delta === el.getAttribute('data-d')) { setFilter(body.getAttribute('data-first')); } else { setDelta(el.getAttribute('data-d')); } return true; }
     if (target.closest('#elsewhere')) { setFilter('all'); return true; }
-    if ((el = target.closest('[data-fold]'))) { all('#list .modgroup').forEach(function (g) { g.open = el.getAttribute('data-fold') === 'open'; }); return true; }
+    if ((el = target.closest('[data-fold]'))) { fold = el.getAttribute('data-fold') === 'open';
+      all('#list .modgroup').forEach(function (g) { g.open = fold; }); return true; }
     if ((el = target.closest('[data-tab]'))) { tab = Number(el.getAttribute('data-tab')); tabs(); return true; }
     if ((el = target.closest('[data-id]'))) { show('t' + el.getAttribute('data-id')); openPane(el); return true; }
     return false;
@@ -964,7 +974,7 @@ RUN_PAGE_JS = r'''
       if (c) { all('[data-col="' + c.getAttribute('data-col') + '"]').forEach(function (x) { x.classList.add('hot'); }); }
     });
   }
-  $('#filter').addEventListener('input', function (ev) { q = ev.target.value.trim().toLowerCase(); list(); map(); });
+  $('#filter').addEventListener('input', function (ev) { q = ev.target.value.trim().toLowerCase(); fold = null; list(); map(); });
   setFilter(filter); show('t-run');   // setFilter, not list(): the open tab says aria-pressed from the start
   // a link to one test (#<its row id>) opens that test under its tab, and #advisories opens the notes
   function follow() {

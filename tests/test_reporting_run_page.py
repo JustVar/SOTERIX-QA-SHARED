@@ -284,16 +284,27 @@ def test_find_axis_falls_back_to_the_parameter_text_when_the_provider_fails(answ
     assert [c['label'] for c in axis['columns']] == ['5b43', '5b41', '5b42']
 
 
-def test_find_axis_is_none_when_a_cell_repeats():
-    """A run on 2 browsers has 2 records for 1 (function, parameter) cell, and the map has 1 square for it.
-    No map: the rows show each record."""
+def test_a_cell_claimed_twice_keeps_the_worse_outcome_and_the_map():
+    """2 browsers, or 1 node id spelled with and without its xdist group, claim 1 cell. The map keeps
+    its shape and the square shows the worse of the 2 (it used to remove the whole map, with no word
+    to the reader)."""
     records = _grid(('test_a', 'test_b'), CAMERAS[:2])
-    assert rp.find_axis(records, {}) is not None
+    axis = rp.find_axis(records, {})
+    assert axis is not None
+    shape = (len(axis['rows']), len(axis['columns']))
+
     twice = [*records, _rec(f'tests/ui/c2c/test_c.py::test_a[{CAMERAS[0]}-firefox]', 'failed')]
-    assert rp.find_axis(twice, {}) is None
-    # The same cell with an xdist group is the same cell.
+    axis_twice = rp.find_axis(twice, {})
+    assert axis_twice is not None
+    assert (len(axis_twice['rows']), len(axis_twice['columns'])) == shape
+    cell = next(cells[CAMERAS[0]] for _mod, _title, cells in axis_twice['rows'] if CAMERAS[0] in cells)
+    assert cell.outcome == 'failed', 'the worse outcome owns the square'
+
+    # The same cell with an xdist group is the same cell, and the map survives it.
     grouped = [*records, _rec(f'tests/ui/c2c/test_c.py::test_b[{CAMERAS[1]}-chromium]@account_c2c')]
-    assert rp.find_axis(grouped, {}) is None
+    axis_grouped = rp.find_axis(grouped, {})
+    assert axis_grouped is not None
+    assert (len(axis_grouped['rows']), len(axis_grouped['columns'])) == shape
 
 
 @pytest.mark.parametrize('source', ['summary', 'provider'])
@@ -1597,3 +1608,33 @@ def test_a_folder_stamp_is_a_time_too():
     """A run with no summary has only its folder name for a start: '2026-08-24_10-00-00' converts like the ISO form."""
     assert rp.utc_iso('2026-08-24_10-00-00', '-05:00') == '2026-08-24T15:00:00Z'
     assert rp.utc_iso('2026-08-24 10-00-00', '+00:00') == '2026-08-24T10:00:00Z'
+
+
+def test_the_readers_fold_choice_survives_a_keystroke(tmp_path, chrome):
+    """Expand all held until the next tab click or keystroke discarded it (audit 09/22/2026)."""
+    records = [_rec(f'tests/ui/m{m}/test_x.py::test_{i}', 'passed') for m in range(3) for i in range(20)]
+    page_html = _render(tmp_path, records, {'counts': {'passed': 60, 'failed': 0, 'skipped': 0, 'errors': 0}})
+    path = tmp_path / 'fold.html'
+    path.write_text(page_html, encoding='utf-8')
+    open_page, errors = chrome
+    pg = open_page(path.as_uri())
+    pg.click("nav button[data-f='pass']")
+    opened = lambda: pg.locator('#list .modgroup:not(.off)[open]').count()
+    assert opened() == 0, '60 rows open folded'
+    pg.click("[data-fold='open']")
+    assert opened() == 3
+    pg.click("nav button[data-f='pass']")          # the same tab again
+    assert opened() == 3, 'a click on the open tab keeps the choice'
+    pg.click("nav button[data-f='all']")
+    assert opened() == 0, 'a different tab returns to the default'
+    pg.click("nav button[data-f='pass']")
+    pg.click("[data-fold='open']")
+    pg.fill('#filter', 'test_1')
+    assert opened() >= 1, 'a new word returns to the default, which opens a short list'
+    pg.fill('#filter', '')
+    pg.click("[data-fold='shut']")
+    assert opened() == 0
+    pg.keyboard.press('/')
+    pg.keyboard.type('x')
+    pg.fill('#filter', '')
+    assert errors == []
