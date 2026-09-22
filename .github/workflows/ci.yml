@@ -30,7 +30,12 @@ on:
         type: boolean
         default: false
 
-# spartan1 runs these jobs and costs no Actions minutes. Three ways back to GitHub's machines:
+# A pull request NEVER runs on spartan1. A workflow file is part of the branch, so anyone who can
+# open a pull request could otherwise run whatever they wrote as the runner's own user, on the box
+# that also runs the nightly, with the secrets the job is given (audit 09/22/2026). Pull requests
+# go to GitHub's machines, where that costs an attacker a throwaway container.
+#
+# spartan1 runs the rest and costs no Actions minutes. Three ways back to GitHub's machines:
 # the `hosted` input on a manual run; the repository variable CI_RUNNER=hosted, which is the one
 # that reaches a push (a dispatch input is null on every automatic event); and the weekly run,
 # which goes there on purpose.
@@ -65,7 +70,7 @@ jobs:
   # 4 minutes of the allowance for about 90 seconds of work. At 90 percent of a
   # 2000 minute month (09/22/2026) that is the largest saving available here.
   test:
-    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +103,7 @@ jobs:
   # base, and the extras check passed nothing (first self-hosted run on
   # spartan1, 09/22/2026). A venv makes the check mean the same on any runner.
   wheel:
-    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -169,7 +174,7 @@ jobs:
   # is therefore a tag that consumers cannot pin to.
   tag-matches-version:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
