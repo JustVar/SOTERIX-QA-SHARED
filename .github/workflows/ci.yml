@@ -9,12 +9,16 @@ name: ci
 #
 # Nothing here needs a credential. The tests are offline by construction:
 # no network, no browser, no QA Touch key.
+#
+# No tag trigger. A release tag points at a commit main already gated, so the tag run
+# repeated the same work: 4 releases in 1 day meant 4 wasted runs against the Actions
+# allowance (09/22/2026). Release from a green main, and tag that commit.
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 # Every job here checks out and runs tests. Nothing writes to the repo, so
 # nothing needs more than read. The sibling repo's qa-nightly.yml already

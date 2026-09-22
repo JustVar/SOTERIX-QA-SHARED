@@ -45,6 +45,10 @@ ZONE_24H = ('Asia/Kolkata', 'IST')
 
 BROWSERS = ('chromium', 'firefox', 'webkit', 'chrome', 'msedge')
 MAP_MAX_COLUMNS = 40
+
+# What a reader does when the trace is not in the archive. deploy/spartan1/README.md holds the full steps.
+TRACE_RECIPE = ('Ask the QA lead for it, or copy it from the machine and open it with '
+                'python -m playwright show-trace. Traces are kept for a few days.')
 _FOLDER_STAMP_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})[ _T](\d{2})-(\d{2})-(\d{2})$')
 _UTC_OFFSET_RE = re.compile(r'^([+-])([01]\d|2[0-3]):?([0-5]\d)$')
 
@@ -247,7 +251,8 @@ def _lab(text: str) -> str:
 
 
 def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
-                   axis: dict | None, with_product: bool, has_run_log: bool = False) -> str:
+                   axis: dict | None, with_product: bool, has_run_log: bool = False,
+                   published_traces: bool = True) -> str:
     """The pane content of 1 test, in a <template> the browser leaves alone until it is asked for."""
     from soterix_qa_shared.reporting.run_report import (
         FAILURE_OUTCOMES,
@@ -296,6 +301,8 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
     shots = _render_shots(rec)
     if shots:
         evidence.append(_lab('Screenshots') + shots)
+    else:
+        evidence.append(_lab('Screenshots') + '<p class="sub">No screenshot for this test.</p>')
     if digest is not None:
         evidence.append(_lab(f'Playwright actions (last {LAST_ACTIONS}, failing one last)'))
         if digest.get('url'):
@@ -314,9 +321,16 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
         evidence.append(_lab('Trace') + '<p class="sub">No trace kept for this test.</p>')
     for rel in rec.traces:
         label = 'Trace zip' if rel.lower().endswith('.zip') else Path(rel).name
-        evidence.append(_lab('Trace') + f'<div><a href="{_href(rel)}">{escape(label)}</a></div>')
-        if rel.lower().endswith('.zip'):
-            evidence.append(f'<pre>python -m playwright show-trace "{escape(os.path.abspath(run_dir / rel))}"</pre>')
+        if published_traces:
+            evidence.append(_lab('Trace') + f'<div><a href="{_href(rel)}">{escape(label)}</a></div>')
+            if rel.lower().endswith('.zip'):
+                evidence.append(f'<pre>python -m playwright show-trace "{escape(os.path.abspath(run_dir / rel))}"</pre>')
+        else:
+            # The nightly copies a run to the served directory without its zips, so a link here
+            # would 404 for every reader (audit 09/22/2026). Say where the trace is instead.
+            evidence.append(_lab('Trace') + f'<p class="sub">The trace of this test is kept on the machine that ran it, '
+                            f'not in this archive: <code>{escape(run_dir.name)}/{escape(rel)}</code>. '
+                            f'{escape(TRACE_RECIPE)}</p>')
     if rec.log_file:
         evidence.append(_lab('Captured output') + f'<div><a href="{_href(rec.log_file)}">{escape(Path(rec.log_file).name)}</a></div>')
     if not failed and has_run_log:
@@ -585,6 +599,8 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 
     # --- rows and pane templates
     has_run_log = (run_dir / 'log' / 'run.log').is_file()
+    # QA_TRACES_PUBLISHED=0 when the run will be copied somewhere without its zips (the nightly does).
+    published_traces = (os.environ.get('QA_TRACES_PUBLISHED', '1') or '1').strip().lower() not in ('0', 'off', 'false', 'no')
     rows, templates, last_module = [], [], None
     used_ids: set[str] = set()
     for rec in records:
@@ -606,7 +622,8 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
             f'aria-label="{escape(outcome_label(rec.outcome), quote=True)}"></span>'
             f'<span class="t">{escape(rec.display_title)}</span><span class="m">{escape(rec.delta)}</span>'
             f'<span class="m">{escape(right)}</span><span class="m">{escape(rec.duration_text)}</span></div>')
-        templates.append(_test_template(ids[rec.nodeid], rec, run_dir, links, axis, with_product, has_run_log))
+        templates.append(_test_template(ids[rec.nodeid], rec, run_dir, links, axis, with_product, has_run_log,
+                                        published_traces))
 
     if last_module is not None:
         rows.append('</details>')
