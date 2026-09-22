@@ -30,9 +30,16 @@ on:
         type: boolean
         default: false
 
-# spartan1 runs these jobs and costs no Actions minutes. Two ways back to GitHub's machines:
-# the `hosted` input on a manual run, and the repository variable CI_RUNNER=hosted, which is the
-# one that reaches a push (a dispatch input is null on every automatic event). The fallback is the dispatch input
+# spartan1 runs these jobs and costs no Actions minutes. Three ways back to GitHub's machines:
+# the `hosted` input on a manual run; the repository variable CI_RUNNER=hosted, which is the one
+# that reaches a push (a dispatch input is null on every automatic event); and the weekly run,
+# which goes there on purpose.
+#
+# The weekly run is hosted because spartan1 never uses the QA_SHARED_DEPLOY_KEY secret: ghrunner
+# has its own on-disk key and `IdentitiesOnly yes` ignores the agent. A revoked or wrong secret
+# would pass green here and fail only on the fallback, which is the one path used in an outage.
+# Once a week the secret is used, the hosted path is proven, and the full interpreter matrix runs.
+# That is about 15 job-minutes a week against a 2000 minute month. The fallback is the dispatch input
 # above: if the box is off, run this workflow by hand with `hosted` ticked. The runner there is
 # ghrunner, which cannot read the nightly's .env and cannot write the published archive.
 
@@ -58,7 +65,7 @@ jobs:
   # 4 minutes of the allowance for about 90 seconds of work. At 90 percent of a
   # 2000 minute month (09/22/2026) that is the largest saving available here.
   test:
-    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +94,7 @@ jobs:
   # base, and the extras check passed nothing (first self-hosted run on
   # spartan1, 09/22/2026). A venv makes the check mean the same on any runner.
   wheel:
-    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -158,7 +165,7 @@ jobs:
   # is therefore a tag that consumers cannot pin to.
   tag-matches-version:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
