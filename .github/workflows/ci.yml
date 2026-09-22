@@ -15,6 +15,11 @@ name: ci
 # release tag matches [project] version. spartan1 runs these jobs for nothing now, so the tag
 # trigger is back and the guard works as written.
 
+# Each action is pinned to a commit SHA, with its version in the comment beside it.
+# A tag moves: `actions/checkout@v4` is whatever that tag points at today, and
+# webfactory/ssh-agent is handed a private key. Dependabot reads the comment and
+# keeps the pin current, so this costs nothing to maintain.
+
 on:
   push:
     branches: [main]
@@ -76,8 +81,8 @@ jobs:
       matrix:
         python-version: ${{ (contains(fromJSON('["push","pull_request"]'), github.event_name) && fromJSON('["3.14"]')) || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: A venv of its own, so a job never inherits the last job's packages
@@ -105,8 +110,8 @@ jobs:
   wheel:
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
       - name: A venv of its own, so a base install is really base
@@ -176,8 +181,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
       - name: The tag must equal [project] version
