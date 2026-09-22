@@ -71,6 +71,12 @@ jobs:
   # so the only honest check installs the BUILT WHEEL. The base install is
   # client-only on purpose: importing the reporter must fail here naming
   # pytest, which is what rule 2's exc.name check depends on.
+  #
+  # Every step below runs inside a venv this job makes, not the interpreter
+  # setup-python hands over. On a runner that keeps its tool cache between
+  # jobs, pytest was already there from the test job, "a base install" was not
+  # base, and the extras check passed nothing (first self-hosted run on
+  # spartan1, 09/22/2026). A venv makes the check mean the same on any runner.
   wheel:
     runs-on: ${{ github.event.inputs.hosted == 'true' && 'ubuntu-latest' || 'self-hosted' }}
     steps:
@@ -78,10 +84,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: A venv of its own, so a base install is really base
+        run: |
+          python -m venv .wheelvenv
+          echo "$PWD/.wheelvenv/bin" >> "$GITHUB_PATH"
       - run: pip install build
       - run: python -m build --wheel
       - name: Install the wheel alone, base extras only
-        run: pip install dist/*.whl
+        run: |
+          pip install dist/*.whl
+          python -c "import importlib.util as u, sys; sys.exit('pytest is present, so this is not a base install') if u.find_spec('pytest') else print('base install confirmed: no pytest')"
       - name: Every module a base install must import
         run: |
           python - <<'PY'
