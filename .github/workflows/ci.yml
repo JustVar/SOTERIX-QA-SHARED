@@ -16,7 +16,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, runner-trial]
   pull_request:
   schedule:
     # Sunday 06:20 UTC: the full interpreter matrix, which a push no longer runs.
