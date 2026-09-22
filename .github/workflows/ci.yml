@@ -18,6 +18,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Sunday 06:20 UTC: the full interpreter matrix, which a push no longer runs.
+    - cron: '20 6 * * 0'
   workflow_dispatch:
 
 # Every job here checks out and runs tests. Nothing writes to the repo, so
@@ -31,12 +34,17 @@ jobs:
   # The interpreter range is a claim until something exercises it.
   # pyproject says >=3.11; the API repo's gate runs 3.12 and UI dev runs
   # 3.14. Before this matrix, only 3.14 was ever run.
+  #
+  # 1 version on a push, all 4 on the weekly run or by hand. GitHub bills each
+  # JOB rounded up to a whole minute, so these 4 jobs of 16 to 28 seconds cost
+  # 4 minutes of the allowance for about 90 seconds of work. At 90 percent of a
+  # 2000 minute month (09/22/2026) that is the largest saving available here.
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ${{ (github.event_name == 'push' && fromJSON('["3.14"]')) || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
