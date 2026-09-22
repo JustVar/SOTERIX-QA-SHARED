@@ -10,13 +10,15 @@ name: ci
 # Nothing here needs a credential. The tests are offline by construction:
 # no network, no browser, no QA Touch key.
 #
-# No tag trigger. A release tag points at a commit main already gated, so the tag run
-# repeated the same work: 4 releases in 1 day meant 4 wasted runs against the Actions
-# allowance (09/22/2026). Release from a green main, and tag that commit.
+# The tag trigger was removed on 09/22/2026 to save Actions minutes, which silently killed
+# tag-matches-version: its `refs/tags/` guard was never true again, so nothing checked that a
+# release tag matches [project] version. spartan1 runs these jobs for nothing now, so the tag
+# trigger is back and the guard works as written.
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   schedule:
     # Sunday 06:20 UTC: the full interpreter matrix, which a push no longer runs.
@@ -28,7 +30,9 @@ on:
         type: boolean
         default: false
 
-# spartan1 runs these jobs and costs no Actions minutes. The fallback is the dispatch input
+# spartan1 runs these jobs and costs no Actions minutes. Two ways back to GitHub's machines:
+# the `hosted` input on a manual run, and the repository variable CI_RUNNER=hosted, which is the
+# one that reaches a push (a dispatch input is null on every automatic event). The fallback is the dispatch input
 # above: if the box is off, run this workflow by hand with `hosted` ticked. The runner there is
 # ghrunner, which cannot read the nightly's .env and cannot write the published archive.
 
@@ -36,6 +40,11 @@ on:
 # nothing needs more than read. The sibling repo's qa-nightly.yml already
 # scopes its token this way; these should not be looser than the file they
 # sit beside.
+# One runner for this repo, so a superseded push must stand down rather than queue.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -49,11 +58,11 @@ jobs:
   # 4 minutes of the allowance for about 90 seconds of work. At 90 percent of a
   # 2000 minute month (09/22/2026) that is the largest saving available here.
   test:
-    runs-on: ${{ github.event.inputs.hosted == 'true' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ${{ (github.event_name == 'push' && fromJSON('["3.14"]')) || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
+        python-version: ${{ (contains(fromJSON('["push","pull_request"]'), github.event_name) && fromJSON('["3.14"]')) || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -78,7 +87,7 @@ jobs:
   # base, and the extras check passed nothing (first self-hosted run on
   # spartan1, 09/22/2026). A venv makes the check mean the same on any runner.
   wheel:
-    runs-on: ${{ github.event.inputs.hosted == 'true' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -149,7 +158,7 @@ jobs:
   # is therefore a tag that consumers cannot pin to.
   tag-matches-version:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ github.event.inputs.hosted == 'true' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
