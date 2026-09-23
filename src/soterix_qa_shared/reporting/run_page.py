@@ -381,6 +381,12 @@ def _run_template(summary: Mapping[str, Any], run_dir: Path, product: str, targe
     def text(key: str) -> str:
         return escape(str(prov.get(key) or ''))
 
+    # The camera, with why it was that one. A run may rotate over the tenant's
+    # online cameras, and a reader who cannot see which camera drove a failure
+    # cannot tell a regression from a camera this test has never driven.
+    camera_html = text('camera')
+    if camera_html and prov.get('camera_reason'):
+        camera_html += f' <span class="sub">({escape(str(prov["camera_reason"]))})</span>'
     browser = ' / '.join(str(v).capitalize() for v in (prov.get('browser'), prov.get('browser_channel')) if v)
     version = text('browser_version')
     latest = text('browser_latest')
@@ -396,7 +402,8 @@ def _run_template(summary: Mapping[str, Any], run_dir: Path, product: str, targe
                   if summary.get('ended') else ''),
                  ('Duration', escape(duration)), ('Commit', text('git_commit')), ('Folder', escape(run_dir.name))]),
         ('Where', [('Environment', text('env').upper()), ('Box', text('box')), ('Tenant', text('base_url_host')),
-                   ('Machine', text('host')), ('Operator', text('operator')), ('Account', text('account'))]),
+                   ('Camera', camera_html), ('Machine', text('host')), ('Operator', text('operator')),
+                   ('Account', text('account'))]),
         ('Browser', [('Browser', escape(browser)), ('Version', version), ('Playwright', text('playwright')),
                      ('pytest-playwright', text('pytest_playwright'))]),
         ('Files', [(label, html) for label, html in file_links]),
@@ -639,8 +646,19 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                                 (DELTA_FIXED, 'Fixed'), (DELTA_NEW_TEST, 'New tests')) if labels.count(label))
         since = time_html(previous.get('started'), previous.get('utc_offset'), friendly_time(previous.get('started')), short=True)
         opened = f'<a href="{run_href(previous["name"], runs_dir, "../")}">Open that run</a>'
+        # A run may rotate over the tenant's online cameras. When the previous run
+        # drove a different one, every label in this row means less: a new failure
+        # may be a camera this test has never driven rather than a change in the
+        # app. Say so beside the labels, not only in the run details, because this
+        # row is what a reader acts on.
+        now_prov = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
+        this_camera, that_camera = now_prov.get('camera'), previous.get('camera')
+        swapped = ''
+        if this_camera and that_camera and this_camera != that_camera:
+            swapped = (f'<span class="swapped" title="A new failure may be the camera, not the app">'
+                       f'Camera changed: {escape(str(that_camera))} &rarr; {escape(str(this_camera))}</span>')
         changes_html = (f'<div id="changes"><span class="lab">Since the previous run, {since}</span>'
-                        + (buttons or '<span class="sub">No test changed.</span>') + opened + '</div>')
+                        + (buttons or '<span class="sub">No test changed.</span>') + swapped + opened + '</div>')
 
     # --- run details, notes, slowest
     file_links = []
@@ -813,6 +831,8 @@ video { width:100%; margin-top:8px; }
 ul.actions { list-style:none; margin:6px 0 0; padding:0; font:12px/1.5 ui-monospace,Consolas,monospace; }
 ul.actions li { padding:2px 0; border-bottom:1px solid var(--rule); overflow-wrap:anywhere; } ul.actions li.failing { color:var(--fail); }
 ul.actions .err, ul.actions .log { display:block; padding-left:14px; } ul.actions .log { color:var(--dim); }
+.swapped { background:var(--warn-bg,#fff4e5); color:var(--warn-fg,#8a5300); border:1px solid var(--warn-br,#f0c992);
+  border-radius:6px; padding:2px 8px; font-size:13px; white-space:nowrap; }
 .history { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px; }
 .strip { display:inline-flex; gap:2px; } .blk { width:9px; height:14px; display:inline-block; background:var(--rule); }
 .blk.passed, .blk.xpassed { background:var(--pass); opacity:.55; } .blk.failed, .blk.error { background:var(--fail); } .blk.skipped, .blk.xfailed { background:var(--skip); opacity:.6; }

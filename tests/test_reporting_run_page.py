@@ -887,6 +887,48 @@ def test_a_run_with_no_test_has_no_group(tmp_path):
         f'<script>{rp.RUN_PAGE_JS}</script>', '')
 
 
+def test_the_page_says_when_the_run_drove_a_different_camera(tmp_path):
+    """A run may rotate over the tenant's online cameras. When the camera changed,
+    every change label means less: a new failure may be a camera this test has
+    never driven rather than a change in the app. The reader has to see that
+    beside the labels, which is what they act on, not only in the run details.
+    """
+    summary = {'provenance': {'camera': 'Axis P3247-LV', 'camera_reason': 'rotated over 16 online cameras'}}
+    changed = _render(tmp_path / 'changed', _changed_records(), summary=summary,
+                      previous={**PREVIOUS, 'camera': 'Vivotek'})
+    assert 'Camera changed: Vivotek &rarr; Axis P3247-LV' in changed
+    # and it is in the row the reader acts on, not buried in the details pane
+    assert 'Camera changed' in _changes_of(changed)
+
+    same = _render(tmp_path / 'same', _changed_records(), summary=summary,
+                   previous={**PREVIOUS, 'camera': 'Axis P3247-LV'})
+    assert 'Camera changed' not in same, 'the same camera is not news'
+
+    # An older run recorded no camera, so there is nothing to compare and
+    # nothing to claim.
+    unknown = _render(tmp_path / 'unknown', _changed_records(), summary=summary, previous=PREVIOUS)
+    assert 'Camera changed' not in unknown
+
+
+def test_the_run_details_name_the_camera_and_why_it_was_that_one(tmp_path):
+    """Which camera drove the run is a fact about where it ran, like the machine."""
+    summary = {'provenance': {'camera': 'Avigilon Thermal', 'camera_reason': "needs a camera with 'thermal'"}}
+    page = _render(tmp_path, [_rec('tests/a.py::test_a[chromium]')], summary=summary)
+    assert 'Avigilon Thermal' in page
+    assert "needs a camera with &#x27;thermal&#x27;" in page or "needs a camera with 'thermal'" in page
+    assert '>Camera<' in page
+
+
+def test_a_camera_name_from_the_tenant_cannot_inject_markup(tmp_path):
+    """The name comes from the tenant, so it is escaped everywhere it is shown."""
+    nasty = '<img src=x onerror=alert(1)>'
+    page = _render(tmp_path, _changed_records(),
+                   summary={'provenance': {'camera': nasty, 'camera_reason': nasty}},
+                   previous={**PREVIOUS, 'camera': 'Vivotek'})
+    assert 'onerror=alert(1)>' not in page
+    assert '&lt;img src=x' in page
+
+
 def test_each_row_carries_its_change_label(tmp_path):
     """data-d of a row is the change label of its test, '' for a test with none, and the text of it is escaped."""
     records = _changed_records()

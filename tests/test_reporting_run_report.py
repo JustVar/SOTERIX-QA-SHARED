@@ -1132,6 +1132,9 @@ def test_load_history_reads_outcomes_errors_and_start_times(tmp_path):
                                             '2026-08-22_10-00-00__tests-ui-views']
     assert history[0] == {'name': '2026-08-23_10-00-00__tests-ui-views',
                           'started': '2026-08-23T10:00:00', 'utc_offset': None,
+                          # None here because these fixtures write no provenance; a real run
+                          # carries the camera it drove, which is how the page says it changed.
+                          'camera': None,
                           'outcomes': {NODEID: 'passed'}, 'errors': {}}
     assert history[1]['errors'] == {NODEID: 'assert 1 == 2'}
     # The offset is the earlier run's own, never the offset of the run that the page is for.

@@ -1138,7 +1138,8 @@ class TestTestLog:
         assert set(summary['provenance']) == {'env', 'box', 'base_url_host', 'git_commit',
                                               'playwright', 'pytest_playwright', 'browser',
                                               'browser_channel', 'product', 'host', 'operator',
-                                              'account', 'browser_version', 'browser_latest'}
+                                              'account', 'browser_version', 'browser_latest',
+                                              'camera', 'camera_reason'}
         page = (dest / 'run.html').read_text(encoding='utf-8')
         assert 'href="log/t-x.py-test_b-chromium.log"' in page
         assert 'href="log/t-x.py-test_a-chromium.log"' not in page

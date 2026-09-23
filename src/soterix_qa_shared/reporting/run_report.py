@@ -683,6 +683,8 @@ def load_history(run_dir: Path, limit: int = HISTORY_RUNS) -> list[dict]:
         summary = load_summary(earlier)
         history.append({'name': earlier.name, 'started': run_started(earlier, summary),
                         'utc_offset': summary.get('utc_offset'),
+                        # so the page can say the camera changed between 2 runs
+                        'camera': (summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}).get('camera'),
                         'outcomes': load_previous_outcomes(earlier),
                         'errors': load_run_errors(earlier)})
     return history

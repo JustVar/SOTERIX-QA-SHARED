@@ -898,6 +898,10 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
         # must read apart (09/17/2026).
         'host': None, 'operator': None, 'account': None,
         'browser_version': None, 'browser_latest': None,
+        # Which camera the run drove, and why that one. A run may rotate over
+        # the tenant's online cameras, so a red test on a camera it has never
+        # driven before is not the same news as one on its usual camera.
+        'camera': None, 'camera_reason': None,
     }
     with contextlib.suppress(Exception):
         out['host'] = socket.gethostname() or None
@@ -914,6 +918,10 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
     try:
         from config.base_config import config as env_config
         out['base_url_host'] = urlparse(str(env_config.get('base_url') or '')).netloc or None
+        pick = env_config.get('camera_pick')
+        pick = pick if isinstance(pick, dict) else {}
+        out['camera'] = str(pick.get('camera') or env_config.get('test_camera_name') or '') or None
+        out['camera_reason'] = str(pick.get('reason') or '') or None
     except Exception as e:  # noqa: BLE001 - the env module needs .env and network names; the host is a label
         log.debug(f'run_archive: no base_url host: {e}')
     try:
