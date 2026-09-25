@@ -1399,3 +1399,25 @@ def test_a_nearly_full_disk_warns_at_session_start(monkeypatch, tmp_path, capsys
     ra._warn_low_disk()
     assert capsys.readouterr().err == ''
 
+
+
+def test_the_known_defect_provider_is_asked_per_test_and_cannot_break_the_archive():
+    """The consumer's lookup answers {row, since, what} or None; a lookup that
+    raises, or answers junk, leaves the record unlabelled and the run alive."""
+    from soterix_qa_shared.reporting import run_archive as ra
+    try:
+        ra.configure_known_defects(lambda nodeid: {'row': 56, 'since': '09/12', 'what': 'CSP'} if 'save_view' in nodeid else None)
+        assert ra.known_defect_for('tests/ui/views/test_views_basic.py::test_save_view[chromium]') == {'row': 56, 'since': '09/12', 'what': 'CSP'}
+        assert ra.known_defect_for('tests/ui/views/test_views_basic.py::test_other[chromium]') is None
+        ra.configure_known_defects(lambda nodeid: {'row': 1})          # no what: not a label
+        assert ra.known_defect_for('x::test_y') is None
+        ra.configure_known_defects(lambda nodeid: 'CSP')               # not a dict
+        assert ra.known_defect_for('x::test_y') is None
+        def boom(nodeid):
+            raise RuntimeError('yaml on fire')
+        ra.configure_known_defects(boom)
+        assert ra.known_defect_for('x::test_y') is None
+        ra.configure_known_defects(None)
+        assert ra.known_defect_for('x::test_y') is None
+    finally:
+        ra.configure_known_defects(None)

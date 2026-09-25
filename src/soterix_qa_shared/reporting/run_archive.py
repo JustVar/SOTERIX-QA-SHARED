@@ -687,6 +687,7 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
             'product': product_name(product_for(nodeid, marker_project, project_key)),
             'outcome': None, 'duration_s': 0.0, 'phases': {}, 'log_file': None,
             'error': None, 'reason': None,
+            'known_defect': known_defect_for(nodeid),
         }
     if report.outcome == 'rerun':
         # Not final, but not nothing: a test that passed on its second
@@ -941,6 +942,32 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
     channel = config.getoption('browser_channel', default=None)
     out['browser_channel'] = str(channel) if channel else None
     return out
+
+
+# Which tests are red for an app defect somebody already knows about. The
+# consumer registers a provider (nodeid -> {row, since, what} or None); the
+# answer is written into the test's record, so a served page renders the label
+# without the consumer's files. A nightly showed about 30 red tests and nothing
+# said which were defects already being worked (09/25/2026).
+_KNOWN_DEFECTS = None
+
+
+def configure_known_defects(provider) -> None:
+    """Register the consumer's known-defect lookup, or None to clear it."""
+    global _KNOWN_DEFECTS
+    _KNOWN_DEFECTS = provider
+
+
+def known_defect_for(nodeid: str) -> dict | None:
+    """The registered provider's answer for this test, or None when there is none or it fails."""
+    if _KNOWN_DEFECTS is None:
+        return None
+    try:
+        answer = _KNOWN_DEFECTS(nodeid)
+    except Exception as e:  # noqa: BLE001 - why: a label lookup must never take the archive down; the record is simply unlabelled
+        log.debug(f'run_archive: known-defect lookup failed for {nodeid}: {e}')
+        return None
+    return dict(answer) if isinstance(answer, dict) and answer.get('what') else None
 
 
 def _build_summary(*, started: float, ended: float, exitstatus: int | None,

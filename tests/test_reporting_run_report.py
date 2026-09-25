@@ -1582,3 +1582,20 @@ def test_the_filter_opens_a_folded_group_with_a_match_and_hides_one_with_none():
         shown = page.evaluate("() => ['g1','g2'].map(i => document.getElementById(i).style.display)")
         assert shown == ['', '']
         browser.close()
+
+
+def test_a_records_known_defect_comes_from_the_run_record_and_only_as_a_dict(tmp_path):
+    """The label travels inside summary.json, so a served page needs nothing else to show it."""
+    import json
+    run = tmp_path / '2026-09-25_09-00-00__tests-ui'
+    run.mkdir()
+    (run / 'summary.json').write_text(json.dumps({'tests': [
+        {'nodeid': 'tests/a.py::test_a[chromium]', 'outcome': 'failed',
+         'known_defect': {'row': 56, 'since': '09/12/2026', 'what': 'CSP refuses the data URL'}},
+        {'nodeid': 'tests/a.py::test_b[chromium]', 'outcome': 'failed', 'known_defect': 'not a dict'},
+        {'nodeid': 'tests/a.py::test_c[chromium]', 'outcome': 'passed'},
+    ]}), encoding='utf-8')
+    recs, _ = rr.collect_tests(run)
+    assert recs['tests/a.py::test_a[chromium]'].known == {'row': 56, 'since': '09/12/2026', 'what': 'CSP refuses the data URL'}
+    assert recs['tests/a.py::test_b[chromium]'].known is None
+    assert recs['tests/a.py::test_c[chromium]'].known is None

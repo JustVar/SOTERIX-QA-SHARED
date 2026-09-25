@@ -929,6 +929,81 @@ def test_a_camera_name_from_the_tenant_cannot_inject_markup(tmp_path):
     assert '&lt;img src=x' in page
 
 
+KNOWN = {'row': 56, 'since': '09/12/2026', 'what': "Saving a view never finishes; the tenant's CSP refuses the data URL"}
+
+
+def test_a_known_defect_is_labelled_on_its_row_and_counted_apart_in_the_verdict(tmp_path):
+    """A nightly showed about 30 red tests and nothing said which were defects
+    already being worked, so a reader had to remember (09/25/2026). The row
+    carries the chip, the verdict counts them apart from the failures still to
+    read, and the side pane points at the register.
+    """
+    records = _changed_records()
+    fails = [r for r in records if r.outcome == 'failed']
+    assert len(fails) >= 2, 'the fixture needs at least 2 failures for this pin'
+    fails[0].known = dict(KNOWN)
+    page = _render(tmp_path, records)
+    assert 'Known defect, row 56</span>' in page
+    assert page.count('class="m k"') == 1, 'one chip, on the one labelled row'
+    assert '1 of the failures is a known defect (register row 56)' in page
+    assert f'{len(fails) - 1} failure{"s are" if len(fails) - 1 != 1 else " is"} to look at.' in page
+    assert 'Register row 56, since 09/12/2026: Saving a view never finishes' in page
+    # the text filter finds them: the search string carries the words
+    assert 'known defect' in _outside_templates(page).lower()
+
+
+def test_a_known_defect_that_passed_says_so_which_is_the_prompt_to_retire_it(tmp_path):
+    """An entry for a test that now passes is stale; the page must not hide that."""
+    rec = _rec('tests/a.py::test_a[chromium]')
+    rec.known = dict(KNOWN)
+    page = _render(tmp_path, [rec])
+    assert 'Known defect, row 56, passed</span>' in page
+    assert '1 known defect passed: check whether to retire the entry.' in page
+    assert 'to look at' not in page
+
+
+def test_when_every_failure_is_known_the_verdict_says_there_is_nothing_new(tmp_path):
+    """The sentence a QA lead wants at 08:00."""
+    records = _changed_records()
+    for r in records:
+        if r.outcome == 'failed':
+            r.known = {'row': 83, 'since': '09/23/2026', 'what': 'Bookmarks fail on some cameras'}
+    page = _render(tmp_path, records)
+    assert 'nothing new to look at.' in page
+    assert 'to look at.' not in page.replace('nothing new to look at.', '')
+
+
+def test_a_known_defect_without_a_row_is_still_a_label(tmp_path):
+    """Some defects are dated in the register's App defects section and have no row number."""
+    rec = _rec('tests/a.py::test_a[chromium]')
+    rec.outcome = 'failed'
+    rec.known = {'row': None, 'since': '09/11/2026', 'what': 'The Download icon does nothing'}
+    page = _render(tmp_path, [rec])
+    assert 'Known defect</span>' in page
+    assert 'Reported, since 09/11/2026: The Download icon does nothing' in page
+    assert '1 of the failures is a known defect, ' in page or 'is a known defect:' in page
+
+
+def test_the_register_text_of_a_known_defect_cannot_inject_markup(tmp_path):
+    """The text comes from a YAML file people edit; it is escaped in the chip's title, the facts and the verdict."""
+    rec = _rec('tests/a.py::test_a[chromium]')
+    rec.outcome = 'failed'
+    rec.known = {'row': '<b>row-evil</b>', 'since': '<i>since-evil</i>', 'what': '<img src=x onerror=alert(1)>'}
+    page = _render(tmp_path, [rec])
+    assert 'onerror=alert(1)>' not in page
+    assert '&lt;img src=x' in page
+    assert '<b>row-evil</b>' not in page and '&lt;b&gt;row-evil' in page
+    assert '<i>since-evil</i>' not in page and '&lt;i&gt;since-evil' in page
+
+
+def test_no_known_defect_means_no_chip_no_sentence_no_fact(tmp_path):
+    """The label is silent when there is nothing to say."""
+    page = _render(tmp_path, _changed_records())
+    assert 'class="m k"' not in page
+    assert 'known defect' not in _outside_templates(page).lower()
+    assert 'Known defect' not in page
+
+
 def test_each_row_carries_its_change_label(tmp_path):
     """data-d of a row is the change label of its test, '' for a test with none, and the text of it is escaped."""
     records = _changed_records()

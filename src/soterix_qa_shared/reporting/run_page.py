@@ -346,6 +346,11 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
     facts = []
     if rec.delta:
         facts.append(('Since the previous run', escape(rec.delta)))
+    if rec.known:
+        head = ('Register row ' + escape(str(rec.known.get('row')))) if rec.known.get('row') else 'Reported'
+        if rec.known.get('since'):
+            head += ', since ' + escape(str(rec.known['since']))
+        facts.append(('Known defect', f'{head}: {escape(str(rec.known.get("what") or ""))}'))
     if failed and rec.signature:
         if rec.seen is None:
             facts.append(('This error', 'New: no earlier run in the archive shows it'))
@@ -442,6 +447,35 @@ def _slowest_template(records: Sequence[TestRecord], ids: Mapping[str, int], axi
             + (rows or '<p class="sub">No per-test timing in this run.</p>') + '</template>')
 
 
+def _known_chip(rec: TestRecord) -> str:
+    """The row's Known defect chip, or nothing. A known defect that passed says so: the prompt to retire its entry."""
+    if not rec.known:
+        return ''
+    from soterix_qa_shared.reporting.run_report import PASSED_OUTCOMES
+    row = rec.known.get('row')
+    title = escape(str(rec.known.get('what') or ''), quote=True)
+    text = 'Known defect' + (f', row {escape(str(row))}' if row else '') + (', passed' if rec.outcome in PASSED_OUTCOMES else '')
+    return f'<span class="m k" title="{title}">{text}</span>'
+
+
+def _known_defects_line(records: Sequence[TestRecord], failed: int) -> str:
+    """The verdict's sentence about known defects, or '' when the run has none."""
+    from soterix_qa_shared.reporting.run_report import PASSED_OUTCOMES, plural
+    red = [r for r in records if r.known and r.outcome not in PASSED_OUTCOMES and r.outcome != 'skipped']
+    green = [r for r in records if r.known and r.outcome in PASSED_OUTCOMES]
+    parts = []
+    if red:
+        rows = sorted({str(r.known.get('row')) for r in red if r.known.get('row')}, key=lambda x: (len(x), x))
+        where = f" (register {'row' if len(rows) == 1 else 'rows'} {', '.join(rows)})" if rows else ''
+        left = failed - len(red)
+        parts.append(f"{len(red)} of the failures {'is a' if len(red) == 1 else 'are'} known "
+                     f"{'defect' if len(red) == 1 else 'defects'}{where}"
+                     + (f", {plural(left, 'failure is', 'failures are')} to look at." if left > 0 else ': nothing new to look at.'))
+    if green:
+        parts.append(plural(len(green), 'known defect passed', 'known defects passed') + ': check whether to retire the entry.')
+    return ' '.join(parts)
+
+
 def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Sequence[TestRecord],
              summary: Mapping[str, Any], unknown: int = 0, with_changes: bool = True) -> tuple[str, str]:
     """The large line and the line under it."""
@@ -478,6 +512,9 @@ def _verdict(failed: int, passed: int, skipped: int, causes: int, records: Seque
     detail = ', '.join(plural(n, one, many) for n, one, many in changes if n)
     if detail and with_changes:
         parts.append(detail[0].upper() + detail[1:] + ' since the previous run.')
+    known = _known_defects_line(records, failed)
+    if known:
+        parts.append(known)
     reruns = sum(1 for r in records if r.reruns and r.outcome in PASSED_OUTCOMES)
     if reruns:
         parts.append(plural(reruns, 'test passed on a rerun', 'tests passed on a rerun') + '.')
@@ -621,13 +658,14 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
                         + f'<details class="modgroup" open><summary class="modrow">{escape(rec.module_name)} <b></b></summary>')
             last_module = rec.module_name
         key = ' '.join(w for w in (rec.display_title, rec.nodeid, rec.case_key, rec.case_title, rec.module_name,
-                                   rec.outcome, rec.delta, rec.product, column_name(axis, rec.nodeid)) if w).lower()
+                                   rec.outcome, rec.delta, rec.product, column_name(axis, rec.nodeid),
+                                   'known defect' if rec.known else '') if w).lower()
         right = ' · '.join(part for part in (rec.product if with_product else '', column_name(axis, rec.nodeid)) if part)
         rows.append(
             f'<div class="row" role="button" tabindex="0" id="{escape(row_id, quote=True)}" data-id="{ids[rec.nodeid]}" '
             f'data-o="{bucket(rec.outcome)}" data-d="{escape(rec.delta, quote=True)}" data-test="{escape(key, quote=True)}"><span class="g {bucket(rec.outcome)}" role="img" '
             f'aria-label="{escape(outcome_label(rec.outcome), quote=True)}"></span>'
-            f'<span class="t">{escape(rec.display_title)}</span><span class="m">{escape(rec.delta)}</span>'
+            f'<span class="t">{escape(rec.display_title)}</span><span class="m">{escape(rec.delta)}</span>{_known_chip(rec)}'
             f'<span class="m">{escape(right)}</span><span class="m">{escape(rec.duration_text)}</span></div>')
         templates.append(_test_template(ids[rec.nodeid], rec, run_dir, links, axis, with_product, has_run_log,
                                         published_traces))
@@ -831,6 +869,7 @@ video { width:100%; margin-top:8px; }
 ul.actions { list-style:none; margin:6px 0 0; padding:0; font:12px/1.5 ui-monospace,Consolas,monospace; }
 ul.actions li { padding:2px 0; border-bottom:1px solid var(--rule); overflow-wrap:anywhere; } ul.actions li.failing { color:var(--fail); }
 ul.actions .err, ul.actions .log { display:block; padding-left:14px; } ul.actions .log { color:var(--dim); }
+.m.k { margin-left:6px; padding:1px 7px; border-radius:6px; font-size:12px; background:var(--warn-bg,#fff4e5); color:var(--warn-fg,#8a5300); border:1px solid var(--warn-br,#f0c992); }
 .swapped { background:var(--warn-bg,#fff4e5); color:var(--warn-fg,#8a5300); border:1px solid var(--warn-br,#f0c992);
   border-radius:6px; padding:2px 8px; font-size:13px; white-space:nowrap; }
 .history { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px; }

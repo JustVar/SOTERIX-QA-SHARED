@@ -247,6 +247,8 @@ class TestRecord:
     log_file: str = ''
     seconds: float | None = None
     delta: str = ''
+    # {row, since, what} when the register already names this test's failure as an app defect
+    known: dict | None = None
     # Filled by build_run_report for failures: the error headline, its
     # signature, the trace digest, and the newest earlier run that showed
     # the same signature ({'run', 'started'}, None when the error is new).
@@ -1062,6 +1064,7 @@ def collect_tests(run_dir: Path) -> tuple[dict[str, TestRecord], list[str]]:
         rec.reruns = int(row.get('reruns') or 0)
         rec.reason = str(row.get('reason') or '')
         rec.phases = dict(row.get('phases') or {}) if isinstance(row.get('phases'), dict) else {}
+        rec.known = dict(row['known_defect']) if isinstance(row.get('known_defect'), dict) else None
     for nodeid, row in load_report_results(run_dir).items():
         rec = tests.setdefault(nodeid, TestRecord(nodeid))
         rec.duration, rec.log = row['duration'], row['log']
