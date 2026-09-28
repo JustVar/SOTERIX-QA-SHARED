@@ -718,6 +718,9 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
         # The line run_report groups failures by and checks against the
         # previous runs. Kept here so no later reader needs report.html.
         rec['error'] = error_line(getattr(report, 'longreprtext', '') or '')
+        # A name match stands; a signature match is only possible now.
+        if not rec.get('known_defect'):
+            rec['known_defect'] = known_defect_for(nodeid, rec['error'])
     if outcome == 'xfailed':
         rec['reason'] = str(getattr(report, 'wasxfail', '') or '')
     if outcome == 'skipped':
@@ -958,12 +961,22 @@ def configure_known_defects(provider) -> None:
     _KNOWN_DEFECTS = provider
 
 
-def known_defect_for(nodeid: str) -> dict | None:
-    """The registered provider's answer for this test, or None when there is none or it fails."""
+def known_defect_for(nodeid: str, error: str | None = None) -> dict | None:
+    """The registered provider's answer for this test, or None when there is none or it fails.
+
+    Asked twice: when the record is made, with no error, and again when a
+    failure lands its error line, because a defect that hits by ERROR
+    SIGNATURE rather than by test name (a tenant's search API answering 500
+    to whichever test searched that night) can only be recognised then. A
+    provider that takes one argument still works.
+    """
     if _KNOWN_DEFECTS is None:
         return None
     try:
-        answer = _KNOWN_DEFECTS(nodeid)
+        try:
+            answer = _KNOWN_DEFECTS(nodeid, error)
+        except TypeError:  # why: an older provider takes the nodeid alone; ask it that way rather than fail the archive
+            answer = _KNOWN_DEFECTS(nodeid)
     except Exception as e:  # noqa: BLE001 - why: a label lookup must never take the archive down; the record is simply unlabelled
         log.debug(f'run_archive: known-defect lookup failed for {nodeid}: {e}')
         return None

@@ -1421,3 +1421,20 @@ def test_the_known_defect_provider_is_asked_per_test_and_cannot_break_the_archiv
         assert ra.known_defect_for('x::test_y') is None
     finally:
         ra.configure_known_defects(None)
+
+
+def test_the_known_defect_lookup_hands_the_error_over_and_still_serves_a_one_argument_provider():
+    """A defect that hits by error signature can only be recognised once the failure has an
+    error line, so the lookup is asked again then, with it. A provider written before that
+    took the nodeid alone, and must keep working."""
+    from soterix_qa_shared.reporting import run_archive as ra
+    seen = []
+    try:
+        ra.configure_known_defects(lambda nodeid, error: (seen.append((nodeid, error)) or ({'row': 131, 'what': 'search API'} if error and 'no search job' in error else None)))
+        assert ra.known_defect_for('t.py::test_a') is None
+        assert ra.known_defect_for('t.py::test_a', 'Search: no search job was sent within 0 s') == {'row': 131, 'what': 'search API'}
+        assert seen == [('t.py::test_a', None), ('t.py::test_a', 'Search: no search job was sent within 0 s')]
+        ra.configure_known_defects(lambda nodeid: {'row': 1, 'what': 'by name'})
+        assert ra.known_defect_for('t.py::test_a', 'any error') == {'row': 1, 'what': 'by name'}, 'the old shape still answers'
+    finally:
+        ra.configure_known_defects(None)
