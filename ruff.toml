@@ -10,7 +10,10 @@
 
 # Templates that consuming repos copy. Their imports resolve in the
 # consumer, not here, so linting them in this repo is meaningless.
-exclude = ["docs/shim_guard_template.py"]
+# .civenv and .wheelvenv are the venvs CI makes INSIDE the workspace. ruff skips
+# .venv and venv on its own, not these, so `ruff check .` read pytest's own
+# site-packages and failed the hosted canary on 3.11 and 3.12 (09/27/2026).
+exclude = ["docs/shim_guard_template.py", ".civenv", ".wheelvenv"]
 
 [lint.per-file-ignores]
 # Blind-except is the correct shape for this whole pipeline, not a lapse.
