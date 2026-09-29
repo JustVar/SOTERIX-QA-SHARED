@@ -4,22 +4,12 @@ How a change gets into this package, and how it reaches the two repos that
 depend on it. The design rules a change must satisfy are in `docs/RULES.md`.
 This file is only the process around them.
 
-## The Two Remotes
+## The Remote
 
-`origin` carries BOTH push URLs, personal and company, so a plain `git push`
-updates both organisations at once:
-
-```
-company  https://github.com/Soterix-Systems/SOTERIX-QA-SHARED.git (push)
-origin   https://github.com/JustVar/SOTERIX-QA-SHARED.git         (push)
-origin   https://github.com/Soterix-Systems/SOTERIX-QA-SHARED.git (push)
-```
-
-A successful push prints `main -> main` twice. One line means only one
-organisation moved, and the two have drifted.
-
-`company` is the authority. Its CI gates every merge, and its tags mark
-the wheels the consumers carry. The personal mirror is a backup.
+One remote, `origin`, on the Soterix-Systems organisation. Work on a
+branch, open a pull request, and let CI gate the merge. Never force-push
+`main`: its tags mark the wheels the consumers carry, and a rewritten tag
+is a wheel nobody can rebuild.
 
 ## Making a Change
 
@@ -29,7 +19,7 @@ cannot see is the shim seam.
 
 ```powershell
 # once: install this checkout into the consumer's venv, editable
-cd ..\playwright-soterix-qa
+cd ..\<webapp-qa checkout>
 venv\Scripts\pip install -e ..\soterix-qa-shared
 ```
 
@@ -42,7 +32,7 @@ venv\Scripts\python -m pytest          # this package
 venv\Scripts\python -m ruff check .
 venv\Scripts\python tools\prose_check.py
 
-cd ..\playwright-soterix-qa            # and the consumer that will use it
+cd ..\<webapp-qa checkout>            # and the consumer that will use it
 venv\Scripts\python -m pytest tests\plugins tests\tools
 venv\Scripts\python -m pytest tests\plugins\test_shims.py
 ```

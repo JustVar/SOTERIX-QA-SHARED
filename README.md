@@ -267,7 +267,7 @@ repositories.
 |---|---|
 | `docs/CONVENTIONS.md` | How code gets written here, and the trap behind each rule. |
 | `docs/RULES.md` | What must stay true. Read before changing packaging or shims. |
-| `docs/MERGE_RUNBOOK.md` | The two remotes, and the six steps of a release. |
+| `docs/MERGE_RUNBOOK.md` | The remote, the change loop, and the six steps of a release. |
 | `docs/RUN_HISTORY.md` | What a run leaves behind, and why one path is tracked. |
 | `STATUS.md` | What the package holds today, and how the two test repositories install it. |
 | `docs/STYLE.md` | The writing rules, in short. Full version: `docs/writing/ste.md`. |
