@@ -168,7 +168,9 @@ def configure(root):
 #    None when it did not fail). "log_file" is set for failures only.
 # 6: "utc_offset" ('+00:00', '-05:00'): the offset of the machine that ran the tests, at the
 #    start. "started" and "ended" are that machine's own time with no zone, so a page could
-#    not show a box run (UTC) and a laptop run (Central) on one clock.
+#    not show a run from a machine on UTC and a laptop run in another zone on one clock.
+#    Provenance from an older run may carry a "box" label (the tenant of a two-tenant
+#    setup). Nothing writes it now; every reader tolerates it.
 # 4: each test record carries "product" (the name, see plugins/products)
 #    and provenance carries the run's "product".
 SCHEMA_VERSION = 6
@@ -724,9 +726,9 @@ def record_phase(state: _RunState, report: Any, doc: str | None = None,
     if outcome == 'xfailed':
         rec['reason'] = str(getattr(report, 'wasxfail', '') or '')
     if outcome == 'skipped':
-        # A skip's reason is a measured fact now (the box `without` map, the
-        # stream guard, require_items); until 09/11/2026 the record kept none
-        # of it, and a night's 111 skips could not be read back.
+        # A skip's reason is a measured fact (the server's `without` map, the
+        # stream guard, require_items). The record once kept none of it, and
+        # a run's 111 skips could not be read back.
         rec['reason'] = skip_reason(report)
     state.captured.setdefault(nodeid, []).append({
         'phase': report.when, 'outcome': report.outcome, 'duration': duration,
@@ -891,20 +893,17 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
     Every field tolerates absence."""
     out: dict[str, Any] = {
         'env': (environ.get('ENV') or 'qa').strip().lower(),
-        # The tenant within the env. Two boxes share one host, so the host
-        # alone cannot tell an India run from a US run.
-        'box': (environ.get('BOX') or '').strip().lower() or None,
         'base_url_host': None,
         'git_commit': None, 'playwright': None, 'pytest_playwright': None,
         'browser': None, 'browser_channel': None, 'product': product or None,
         # Which machine ran it, as whom, signed in as which account, on which
-        # Chrome: the box's nightly and a laptop run land in one archive and
-        # must read apart (09/17/2026).
+        # Chrome: a scheduled run and a laptop run land in one archive and
+        # must read apart.
         'host': None, 'operator': None, 'account': None,
         'browser_version': None, 'browser_latest': None,
-        # Which camera the run drove, and why that one. A run may rotate over
-        # the tenant's online cameras, so a red test on a camera it has never
-        # driven before is not the same news as one on its usual camera.
+        # Which camera the run drove, and why that one (a pin, or a marker
+        # that needs a particular camera). A red test on a camera it has
+        # never driven before is not the same news as one on its usual camera.
         'camera': None, 'camera_reason': None,
     }
     with contextlib.suppress(Exception):
@@ -948,15 +947,23 @@ def _provenance(config: Any, environ: Mapping[str, str], product: str = '') -> d
 
 
 # Which tests are red for an app defect somebody already knows about. The
-# consumer registers a provider (nodeid -> {row, since, what} or None); the
-# answer is written into the test's record, so a served page renders the label
-# without the consumer's files. A nightly showed about 30 red tests and nothing
-# said which were defects already being worked (09/25/2026).
+# consumer registers a provider: (nodeid, error) -> {'since': ..., 'what': ...}
+# or None. The answer is written into the test's record, so the run page
+# renders the label from summary.json alone, without the consumer's files.
+# Without a provider, or with an empty list behind it, every record gets None
+# and nothing renders. A full run once showed about 30 red tests and nothing
+# said which were defects already being worked; the label is what says it.
 _KNOWN_DEFECTS = None
 
 
 def configure_known_defects(provider) -> None:
-    """Register the consumer's known-defect lookup, or None to clear it."""
+    """Register the consumer's known-defect lookup, or None to clear it.
+
+    The provider gets the test's node id and, on a failure, its first error
+    line. It answers a dict with `what` (one line naming the defect) and,
+    when known, `since` (the date it was reported), or None. Any other key
+    is kept in the record but not rendered.
+    """
     global _KNOWN_DEFECTS
     _KNOWN_DEFECTS = provider
 
@@ -1180,11 +1187,8 @@ def _render_index(entries: list[dict], has_health: bool = False,
         started = summary.get('started') or stamp.replace('_', ' ')
         target = ' '.join(summary.get('target') or []) or slug
         provenance = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
-        # Two boxes share one host and one target string; the box is what
-        # tells their rows apart, so it sits beside the target when recorded.
-        # The machine sits beside it: the nightly's box and a laptop's run
-        # land in the same archive.
-        box = str(provenance.get('box') or '')
+        # The machine sits beside the target: a scheduled run and a laptop's
+        # run land in the same archive and must read apart.
         host = str(provenance.get('host') or '')
         product = (summary_product(summary)
                    or target_product(summary.get('target') or [], default_key))
@@ -1202,7 +1206,7 @@ def _render_index(entries: list[dict], has_health: bool = False,
             # the readable form; the ISO stamp stays in the tooltip and the search words
             f'<span title="{escape(str(started), quote=True)}">{escape(friendly_stamp(started))}</span>',
             escape(product),
-            escape(str(target)) + (f' <code class="box">{escape(box)}</code>' if box else '')
+            escape(str(target))
             + (f' <code class="host" title="ran on {escape(host, quote=True)}">{escape(host)}</code>' if host else ''),
             *[escape(str(counts.get(key, '-')))
               for key in ('passed', 'failed', 'skipped', 'errors')],
@@ -1211,7 +1215,7 @@ def _render_index(entries: list[dict], has_health: bool = False,
             '<span class="open">' + ''.join(links) + '</span>',
         ]
         words = ' '.join(str(w) for w in (started, friendly_stamp(started), product, target,
-                                           box, host, provenance.get('account'),
+                                           host, provenance.get('account'),
                                            provenance.get('operator'), provenance.get('browser_version'),
                                            exit_outcome(exitstatus), name) if w)
         rows.append(f'<tr data-test="{escape(words.lower(), quote=True)}">'
@@ -1276,10 +1280,10 @@ target ({KEEP_RUNS_TOTAL} in total) and rebuilds this page after every run.</p>
 
 def _runners_html(entries: list[dict]) -> str:
     """One line naming each machine's Chrome, from its newest run that
-    recorded one, and whether Google's stable is newer. The box's nightly
-    and the laptops share this archive, and which Chrome ran a run is the
-    first question when a livestream test turns. Empty when no run
-    recorded a machine."""
+    recorded one, and whether Google's stable is newer. Several machines
+    can share one archive, and which Chrome ran a run is the first
+    question when a livestream test turns. Empty when no run recorded a
+    machine."""
     newest: dict[str, dict] = {}
     for entry in sorted(entries, key=lambda e: e.get('name', ''), reverse=True):
         summary = entry.get('summary') or {}
@@ -1476,7 +1480,6 @@ def _live_record(config: Any, state: _RunState, now: float) -> dict:
     remaining = [n for n in state.collected if n not in state.tests]
     return live_record.build_record(
         started=state.started or now, now=now, target=target,
-        box=(os.environ.get('BOX') or '').strip().lower() or None,
         env=(os.environ.get('ENV') or 'qa').strip().lower(), product=product,
         workers=state.workers, collected=len(state.collected), counts=state.counts,
         current=state.current, remaining=remaining, runs_dir=RUNS_DIR,
@@ -1513,7 +1516,7 @@ def _start_live(config: Any, collected: list[str] | None = None) -> None:
         except Exception:  # noqa: BLE001 - why: no xdist means one worker, and the option is not there to read
             _state.workers = 1
         _state.config = config
-        _state.live_paths = live_record.live_paths(RUNS_DIR, os.environ)
+        _state.live_paths = live_record.live_paths(RUNS_DIR)
     if collected is not None and not _state.collected:
         _state.collected = list(collected)
     _write_live(config, _state, force=True)
@@ -1600,8 +1603,8 @@ LOW_DISK_BYTES = 1024 ** 3   # warn under 1 GB free where the reports are writte
 
 
 def _archive_failure_marker() -> Path:
-    """Beside run.log: the one place a wrapper (run.py, a nightly script) can
-    read why the newest run has no archive folder."""
+    """Beside run.log: the one place a wrapper (run.py, a scheduled-run script)
+    can read why the newest run has no archive folder."""
     return RUN_LOG.parent / 'archive_failed.txt'
 
 

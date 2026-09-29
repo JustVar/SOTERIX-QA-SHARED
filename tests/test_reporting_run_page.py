@@ -500,12 +500,12 @@ def test_text_from_the_run_is_escaped_everywhere(tmp_path):
 
 def test_a_skipped_tests_pane_says_why(tmp_path):
     """The Result tab of a skipped test shows its reason; a test with none says its outcome and no error."""
-    why = _rec('tests/a.py::test_a[chromium]', 'skipped', reason='The box cannot decode H.265')
+    why = _rec('tests/a.py::test_a[chromium]', 'skipped', reason='This browser cannot decode H.265')
     plain = _rec('tests/a.py::test_b[chromium]', 'skipped')
     page = _render(tmp_path, [why, plain])
     pane = _template_of(page, why.safe)
     assert re.findall(r'data-tab="\d">([^<]*)<', pane) == ['Result', 'Evidence', 'History', 'Identity']
-    assert '<span class="lab">Skipped because</span><pre>The box cannot decode H.265</pre>' in _tab(pane, 0)
+    assert '<span class="lab">Skipped because</span><pre>This browser cannot decode H.265</pre>' in _tab(pane, 0)
     assert '<p class="sub">Skipped. No error.</p>' in _tab(_template_of(page, plain.safe), 0)
 
 
@@ -642,7 +642,8 @@ def test_times_of_an_earlier_run_convert_with_that_runs_offset_never_this_machin
     """The central pin of the 09/21/2026 audit. 2 runs of 1 target, each with its recorded offset. The page of
     the newer run stamps each time of the earlier run with the earlier run's offset: 'last seen' on the cause,
     'Seen before' and the strip in the test's History tab, 'Compared with' in Run details, and the row of change
-    filters under the tabs. The stamps are exact, so the pin holds on a machine in each zone: a page built on a laptop showed box times 5 hours off."""
+    filters under the tabs. The stamps are exact, so the pin holds on a machine in each zone: a page built on a laptop once showed
+    the times of a UTC machine's runs 5 hours off."""
     nodeid = 'tests/ui/c2c/test_c.py::test_stream_opens[chromium]'
     error = 'AssertionError: the stream did not open'
     for name, started in (('2026-09-20_22-30-00__tests-ui', '2026-09-20T22:30:00'),
@@ -674,7 +675,7 @@ def test_times_of_an_earlier_run_convert_with_that_runs_offset_never_this_machin
 
 
 def test_each_run_of_the_strip_converts_with_its_own_offset(tmp_path):
-    """The box ran the earlier run in India (+05:30) and this run in Central time (-05:00): each time of the
+    """The earlier run was on a machine at +05:30 and this run on one at -05:00: each time of the
     earlier run is by +05:30, and the times of this run are by -05:00."""
     nodeid = 'tests/ui/c2c/test_c.py::test_stream_opens[chromium]'
     for name, started, offset in (('2026-09-20_22-30-00__tests-ui', '2026-09-20T22:30:00', '+05:30'),
@@ -929,25 +930,25 @@ def test_a_camera_name_from_the_tenant_cannot_inject_markup(tmp_path):
     assert '&lt;img src=x' in page
 
 
-KNOWN = {'row': 56, 'since': '09/12/2026', 'what': "Saving a view never finishes; the tenant's CSP refuses the data URL"}
+KNOWN = {'since': '09/12/2026', 'what': "Saving a view never finishes; the tenant's CSP refuses the data URL"}
 
 
 def test_a_known_defect_is_labelled_on_its_row_and_counted_apart_in_the_verdict(tmp_path):
-    """A nightly showed about 30 red tests and nothing said which were defects
-    already being worked, so a reader had to remember (09/25/2026). The row
-    carries the chip, the verdict counts them apart from the failures still to
-    read, and the side pane points at the register.
+    """A full run showed about 30 red tests and nothing said which were defects
+    already being worked, so a reader had to remember. The row carries the
+    chip, the verdict counts them apart from the failures still to read, and
+    the side pane says what the defect is and since when.
     """
     records = _changed_records()
     fails = [r for r in records if r.outcome == 'failed']
     assert len(fails) >= 2, 'the fixture needs at least 2 failures for this pin'
     fails[0].known = dict(KNOWN)
     page = _render(tmp_path, records)
-    assert 'Known defect, row 56</span>' in page
+    assert 'Known defect</span>' in page
     assert page.count('class="m k"') == 1, 'one chip, on the one labelled row'
-    assert '1 of the failures is a known defect (register row 56)' in page
+    assert '1 of the failures is a known defect, ' in page
     assert f'{len(fails) - 1} failure{"s are" if len(fails) - 1 != 1 else " is"} to look at.' in page
-    assert 'Register row 56, since 09/12/2026: Saving a view never finishes' in page
+    assert 'Reported since 09/12/2026: Saving a view never finishes' in page
     # the text filter finds them: the search string carries the words
     assert 'known defect' in _outside_templates(page).lower()
 
@@ -957,7 +958,7 @@ def test_a_known_defect_that_passed_says_so_which_is_the_prompt_to_retire_it(tmp
     rec = _rec('tests/a.py::test_a[chromium]')
     rec.known = dict(KNOWN)
     page = _render(tmp_path, [rec])
-    assert 'Known defect, row 56, passed</span>' in page
+    assert 'Known defect, passed</span>' in page
     assert '1 known defect passed: check whether to retire the entry.' in page
     assert 'to look at' not in page
 
@@ -967,20 +968,22 @@ def test_when_every_failure_is_known_the_verdict_says_there_is_nothing_new(tmp_p
     records = _changed_records()
     for r in records:
         if r.outcome == 'failed':
-            r.known = {'row': 83, 'since': '09/23/2026', 'what': 'Bookmarks fail on some cameras'}
+            r.known = {'since': '09/23/2026', 'what': 'Bookmarks fail on some cameras'}
     page = _render(tmp_path, records)
     assert 'nothing new to look at.' in page
     assert 'to look at.' not in page.replace('nothing new to look at.', '')
 
 
-def test_a_known_defect_without_a_row_is_still_a_label(tmp_path):
-    """Some defects are dated in the register's App defects section and have no row number."""
+def test_a_known_defect_without_a_date_is_still_a_label_and_an_old_row_number_is_not_shown(tmp_path):
+    """An entry may have no `since`. A record archived by an older version may carry a
+    register row number; the register is gone, so the number is not rendered."""
     rec = _rec('tests/a.py::test_a[chromium]')
     rec.outcome = 'failed'
-    rec.known = {'row': None, 'since': '09/11/2026', 'what': 'The Download icon does nothing'}
+    rec.known = {'row': 56, 'what': 'The Download icon does nothing'}
     page = _render(tmp_path, [rec])
     assert 'Known defect</span>' in page
-    assert 'Reported, since 09/11/2026: The Download icon does nothing' in page
+    assert 'Reported: The Download icon does nothing' in page
+    assert 'row 56' not in page and 'Register' not in page
     assert '1 of the failures is a known defect, ' in page or 'is a known defect:' in page
 
 
@@ -992,7 +995,7 @@ def test_the_register_text_of_a_known_defect_cannot_inject_markup(tmp_path):
     page = _render(tmp_path, [rec])
     assert 'onerror=alert(1)>' not in page
     assert '&lt;img src=x' in page
-    assert '<b>row-evil</b>' not in page and '&lt;b&gt;row-evil' in page
+    assert 'row-evil' not in page
     assert '<i>since-evil</i>' not in page and '&lt;i&gt;since-evil' in page
 
 

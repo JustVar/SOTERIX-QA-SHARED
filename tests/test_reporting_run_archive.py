@@ -473,20 +473,17 @@ def test_index_renders_summary_values():
         assert cell in html
 
 
-def test_index_names_the_box_beside_the_target_when_recorded():
-    """Two boxes share one host and one target string, so a run that
-    recorded its box shows it beside the target and the filter box finds
-    it; a run without one shows the target alone."""
-    with_box = {'target': ['tests/ui'], 'provenance': {'env': 'qa', 'box': 'us'}}
-    without = {'target': ['tests/ui'], 'provenance': {'env': 'qa', 'box': None}}
-    html = ra._render_index([_entry('2026-09-08_04-00-00__tests-ui', with_box),
+def test_index_shows_the_target_alone_even_for_an_older_run_with_a_tenant_label():
+    """One server: the index once showed a tenant chip beside the target. A run
+    archived with that label still lists, and the row reads the same as any other."""
+    with_label = {'target': ['tests/ui'], 'provenance': {'env': 'qa', 'box': 'old-label'}}
+    without = {'target': ['tests/ui'], 'provenance': {'env': 'qa'}}
+    html = ra._render_index([_entry('2026-09-08_04-00-00__tests-ui', with_label),
                              _entry('2026-09-07_04-00-00__tests-ui', without)])
     rows = re.findall(r'<tr data-test="([^"]*)">(.*?)</tr>', html, flags=re.DOTALL)
     assert len(rows) == 2
-    assert '<td>tests/ui <code class="box">us</code></td>' in rows[0][1]
-    assert ' us ' in f' {rows[0][0]} '
-    assert '<td>tests/ui</td>' in rows[1][1]
-    assert 'class="box"' not in rows[1][1]
+    assert '<td>tests/ui</td>' in rows[0][1] and '<td>tests/ui</td>' in rows[1][1]
+    assert 'class="box"' not in html and 'old-label' not in html
 
 
 def test_index_has_a_caption_and_survives_no_runs():
@@ -1135,7 +1132,7 @@ class TestTestLog:
         assert by_id[passed]['title'] == 'A'
         assert by_id[failed]['log_file'] == 'log/t-x.py-test_b-chromium.log'
         assert by_id[failed]['error'] == 'assert 1 == 2'
-        assert set(summary['provenance']) == {'env', 'box', 'base_url_host', 'git_commit',
+        assert set(summary['provenance']) == {'env', 'base_url_host', 'git_commit',
                                               'playwright', 'pytest_playwright', 'browser',
                                               'browser_channel', 'product', 'host', 'operator',
                                               'account', 'browser_version', 'browser_latest',
@@ -1212,15 +1209,15 @@ def test_index_links_health_only_when_it_exists(tmp_path):
 
 
 def test_record_phase_keeps_a_skips_reason():
-    """A skipped test's record carries its reason (the box map, the stream
-    guard, require_items all say why); a passed test's reason stays None."""
+    """A skipped test's record carries its reason (the server's `without` map, the
+    stream guard, require_items all say why); a passed test's reason stays None."""
     state = ra._RunState()
     report = _FakePhaseReport('tests/ui/x.py::test_a[chromium]', 'setup', 'skipped')
-    report.longrepr = ('tests/ui/x.py', 12, "Skipped: box us is without 'lpr': Spartan0 has no LPR cameras")
+    report.longrepr = ('tests/ui/x.py', 12, "Skipped: this server is without 'lpr': no plate camera")
     ra.record_phase(state, report)
     rec = state.tests['tests/ui/x.py::test_a[chromium]']
     assert rec['outcome'] == 'skipped'
-    assert rec['reason'] == "box us is without 'lpr': Spartan0 has no LPR cameras"
+    assert rec['reason'] == "this server is without 'lpr': no plate camera"
     assert rec['error'] is None
     passed = _FakePhaseReport('tests/ui/x.py::test_b[chromium]', 'call', 'passed')
     ra.record_phase(state, passed)
@@ -1240,18 +1237,20 @@ def _bare_config():
 
 
 def test_provenance_names_the_machine_the_operator_and_the_browser(monkeypatch, tmp_path):
-    """The nightly's box and a laptop run land in one archive: the record
+    """A scheduled run and a laptop run land in one archive: the record
     says which machine ran it, as whom, on which Chrome, and whether
     Google's stable is newer. The version is written once, by the first
-    page fixture to know it; a later writer does not overwrite it."""
+    page fixture to know it; a later writer does not overwrite it. A BOX
+    in the environment is not read: one server has no tenant to name."""
     monkeypatch.setattr(ra, 'BROWSER_VERSION_FILE', tmp_path / '.browser_version')
     ra.record_browser_version('153.0.8010.36', 'chrome')
     ra.record_browser_version('999.0', 'chrome')
-    monkeypatch.setattr(ra.socket, 'gethostname', lambda: 'spartan1')
-    monkeypatch.setattr(ra.getpass, 'getuser', lambda: 'soterix')
+    monkeypatch.setattr(ra.socket, 'gethostname', lambda: 'runner-1')
+    monkeypatch.setattr(ra.getpass, 'getuser', lambda: 'qa')
     monkeypatch.setattr(ra, 'latest_stable_browser', lambda timeout_s=4.0: '153.0.8010.47')
-    prov = ra._provenance(_bare_config(), {'BOX': 'india'})
-    assert (prov['host'], prov['operator'], prov['box']) == ('spartan1', 'soterix', 'india')
+    prov = ra._provenance(_bare_config(), {'BOX': 'stale'})
+    assert (prov['host'], prov['operator']) == ('runner-1', 'qa')
+    assert 'box' not in prov
     assert (prov['browser_version'], prov['browser_latest']) == ('153.0.8010.36', '153.0.8010.47')
     assert prov['account'] is None  # no env module in this package: a label, not an error
 
@@ -1291,29 +1290,29 @@ def test_latest_stable_browser_reads_the_first_version_and_tolerates_the_rest(mo
 
 
 def test_index_shows_the_machine_beside_the_target_and_a_runners_line():
-    """A row carries its machine after its box; the page opens with each
+    """A row carries its machine after its target; the page opens with each
     machine's Chrome from its newest run, and says when stable is newer."""
-    box_run = {'target': ['tests/ui'], 'provenance': {
-        'box': 'india', 'host': 'spartan1', 'account': 'justin', 'operator': 'soterix',
+    runner_run = {'target': ['tests/ui'], 'provenance': {
+        'host': 'runner-1', 'account': 'qa-account', 'operator': 'qa',
         'browser': 'chromium', 'browser_channel': 'chrome',
         'browser_version': '153.0.8010.36', 'browser_latest': '153.0.8010.47'}}
-    older_box_run = {'target': ['tests/ui'], 'provenance': {
-        'box': 'us', 'host': 'spartan1', 'browser_version': '152.0.1', 'browser_latest': '152.0.1'}}
+    older_runner_run = {'target': ['tests/ui'], 'provenance': {
+        'box': 'old-label', 'host': 'runner-1', 'browser_version': '152.0.1', 'browser_latest': '152.0.1'}}
     laptop_run = {'target': ['tests/ui/views'], 'provenance': {
-        'box': 'us', 'host': 'JV-LAPTOP', 'operator': 'JustinVarughese',
+        'host': 'QA-LAPTOP', 'operator': 'Tester',
         'browser_channel': 'chrome', 'browser_version': '152.0.7977.83', 'browser_latest': '152.0.7977.83'}}
-    html = ra._render_index([_entry('2026-09-17_19-10-45__tests-ui', box_run),
-                             _entry('2026-09-16_04-00-00__tests-ui', older_box_run),
+    html = ra._render_index([_entry('2026-09-17_19-10-45__tests-ui', runner_run),
+                             _entry('2026-09-16_04-00-00__tests-ui', older_runner_run),
                              _entry('2026-09-17_12-00-00__tests-ui-views', laptop_run),
                              _entry('2026-09-15_04-00-00__tests-ui', {'target': ['tests/ui']})])
-    assert '<code class="box">india</code> <code class="host" title="ran on spartan1">spartan1</code>' in html
-    assert '<code class="host" title="ran on JV-LAPTOP">JV-LAPTOP</code>' in html
+    assert '<td>tests/ui <code class="host" title="ran on runner-1">runner-1</code></td>' in html
+    assert '<code class="host" title="ran on QA-LAPTOP">QA-LAPTOP</code>' in html
     runners = html.split('<p class="runners">')[1].split('</p>')[0]
     assert runners.startswith('Runners, by their newest run: ')
-    assert ('<code class="host">JV-LAPTOP</code> Chrome 152.0.7977.83 (current stable); '
-            '<code class="host">spartan1</code> Chrome 153.0.8010.36 '
+    assert ('<code class="host">QA-LAPTOP</code> Chrome 152.0.7977.83 (current stable); '
+            '<code class="host">runner-1</code> Chrome 153.0.8010.36 '
             '<span class="behind">(stable 153.0.8010.47 is out: update it)</span>.') in runners
-    assert 'justin' in html and 'justinvarughese' in html  # the filter words carry account and operator
+    assert 'qa-account' in html and 'tester' in html  # the filter words carry account and operator
     assert '<p class="runners">' not in ra._render_index([_entry('2026-09-15_04-00-00__tests-ui', {'target': ['tests/ui']})])
 
 
@@ -1345,7 +1344,7 @@ def test_one_cause_names_the_error_most_failures_share():
     assert (cause['count'], cause['of'], cause['first']) == (5, 6, 't.py::test_0')
     assert 'ERR_CONNECTION_REFUSED' in cause['line']
     assert _summary_for(same[:4])['one_cause'] is None
-    skips = [{'nodeid': f't.py::s{i}', 'outcome': 'skipped', 'reason': 'box us streams H.265 and this browser cannot decode it'}
+    skips = [{'nodeid': f't.py::s{i}', 'outcome': 'skipped', 'reason': 'the camera streams H.265 and this browser cannot decode it'}
              for i in range(21)]
     assert _summary_for(skips)['one_skip_reason']['count'] == 21
     assert _summary_for(skips[:20])['one_skip_reason'] is None
@@ -1402,14 +1401,14 @@ def test_a_nearly_full_disk_warns_at_session_start(monkeypatch, tmp_path, capsys
 
 
 def test_the_known_defect_provider_is_asked_per_test_and_cannot_break_the_archive():
-    """The consumer's lookup answers {row, since, what} or None; a lookup that
+    """The consumer's lookup answers {since, what} or None; a lookup that
     raises, or answers junk, leaves the record unlabelled and the run alive."""
     from soterix_qa_shared.reporting import run_archive as ra
     try:
-        ra.configure_known_defects(lambda nodeid: {'row': 56, 'since': '09/12', 'what': 'CSP'} if 'save_view' in nodeid else None)
-        assert ra.known_defect_for('tests/ui/views/test_views_basic.py::test_save_view[chromium]') == {'row': 56, 'since': '09/12', 'what': 'CSP'}
+        ra.configure_known_defects(lambda nodeid: {'since': '09/12', 'what': 'CSP'} if 'save_view' in nodeid else None)
+        assert ra.known_defect_for('tests/ui/views/test_views_basic.py::test_save_view[chromium]') == {'since': '09/12', 'what': 'CSP'}
         assert ra.known_defect_for('tests/ui/views/test_views_basic.py::test_other[chromium]') is None
-        ra.configure_known_defects(lambda nodeid: {'row': 1})          # no what: not a label
+        ra.configure_known_defects(lambda nodeid: {'since': '09/12'})   # no what: not a label
         assert ra.known_defect_for('x::test_y') is None
         ra.configure_known_defects(lambda nodeid: 'CSP')               # not a dict
         assert ra.known_defect_for('x::test_y') is None
@@ -1430,11 +1429,11 @@ def test_the_known_defect_lookup_hands_the_error_over_and_still_serves_a_one_arg
     from soterix_qa_shared.reporting import run_archive as ra
     seen = []
     try:
-        ra.configure_known_defects(lambda nodeid, error: (seen.append((nodeid, error)) or ({'row': 131, 'what': 'search API'} if error and 'no search job' in error else None)))
+        ra.configure_known_defects(lambda nodeid, error: (seen.append((nodeid, error)) or ({'what': 'search API'} if error and 'no search job' in error else None)))
         assert ra.known_defect_for('t.py::test_a') is None
-        assert ra.known_defect_for('t.py::test_a', 'Search: no search job was sent within 0 s') == {'row': 131, 'what': 'search API'}
+        assert ra.known_defect_for('t.py::test_a', 'Search: no search job was sent within 0 s') == {'what': 'search API'}
         assert seen == [('t.py::test_a', None), ('t.py::test_a', 'Search: no search job was sent within 0 s')]
-        ra.configure_known_defects(lambda nodeid: {'row': 1, 'what': 'by name'})
-        assert ra.known_defect_for('t.py::test_a', 'any error') == {'row': 1, 'what': 'by name'}, 'the old shape still answers'
+        ra.configure_known_defects(lambda nodeid: {'what': 'by name'})
+        assert ra.known_defect_for('t.py::test_a', 'any error') == {'what': 'by name'}, 'the old shape still answers'
     finally:
         ra.configure_known_defects(None)

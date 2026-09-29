@@ -18,8 +18,8 @@ origin   https://github.com/Soterix-Systems/SOTERIX-QA-SHARED.git (push)
 A successful push prints `main -> main` twice. One line means only one
 organisation moved, and the two have drifted.
 
-`company` is the authority. Its CI gates every merge, and its tags are what
-the consumers pin. The personal mirror is a backup.
+`company` is the authority. Its CI gates every merge, and its tags mark
+the wheels the consumers carry. The personal mirror is a backup.
 
 ## Making a Change
 
@@ -52,34 +52,47 @@ second one means `-qq`, which hides the pass count.
 
 ## Releasing
 
-A consumer pins a TAG. Until a tag exists and the consumer's pin moves, a
-merged change here reaches nobody. Five steps, in this order:
+A consumer installs a built WHEEL from its own `vendor/` folder. Until a
+new wheel is built and copied there, a merged change here reaches nobody.
+Six steps, in this order:
 
-1. **Bump `[project] version`** in `pyproject.toml`. Rule 4: a tag whose
+1. **Bump `[project] version`** in `pyproject.toml`. Rule 4: a wheel whose
    version did not change installs as a silent exit-0 no-op that leaves the
-   old code in place, and CI refuses such a tag.
-2. **Commit and push.** `main -> main` twice.
-3. **Wait for CI to pass on `main`.** The matrix runs 3.11 to 3.14 and has
-   caught bugs the Windows-only development machine could not: a path
-   literal that was absolute on Windows and relative on Linux, and a
-   shebang without an execute bit.
+   old code in place, and CI refuses a tag that does not equal the version.
+2. **Tests, `ruff` and the prose check green.** Then commit and push.
+   `main -> main` twice.
+3. **Wait for CI to pass on `main`.** CI runs on Linux and has caught bugs
+   the Windows-only development machine could not: a path literal that was
+   absolute on Windows and relative on Linux, and a shebang without an
+   execute bit.
 4. **Tag and push the tag to both remotes.**
 
    ```powershell
-   git tag -a v0.20.0 -m "v0.20.0 - what changed"
-   git push origin v0.20.0
-   git push company v0.20.0
+   git tag -a v0.38.0 -m "v0.38.0 - what changed"
+   git push origin v0.38.0
+   git push company v0.38.0
    ```
 
    The tag re-runs CI with the `tag-matches-version` job, which is skipped
-   on ordinary pushes. Do not repin until it is green.
-5. **Repin each consumer** in its `requirements.txt`, on the
-   `soterix-qa-shared @ git+https://...@vX.Y.Z` line. Commit, push, and
-   confirm its CI is green against the new tag.
+   on ordinary pushes. Do not build the wheel until it is green.
+5. **Build the wheel** from the tagged commit:
 
-Steps 4 and 5 are where a release goes wrong quietly. A tag that is never
-pushed, or a consumer that is never repinned, leaves CI installing an older
-package while `main` here looks finished.
+   ```powershell
+   python -m pip wheel . --no-deps -w dist
+   ```
+
+   The file is `dist\soterix_qa_shared-0.38.0-py3-none-any.whl`.
+6. **Copy the wheel into each consumer.** In each consumer's checkout:
+   copy the wheel into `vendor/`, delete the old wheel, change the `==`
+   version on the `soterix-qa-shared==` line of `requirements.txt`, run
+   `pip install -r requirements.txt`, run the offline suites, commit and
+   push. Confirm its CI is green.
+
+Steps 5 and 6 are where a release goes wrong quietly. A wheel that is never
+copied, or a version line that is never changed, leaves the consumer
+installing the older package while `main` here looks finished. Each
+consumer has a test that fails when its installed version, its `==` line
+and the wheel in `vendor/` disagree.
 
 ## Adding a Layer
 
@@ -93,7 +106,8 @@ path.
 
 ## After Any Release
 
-- Both consumers pin the same tag. Two repos on different tags is drift.
-- `STATUS.md` reflects what shipped, including the test count.
+- Both consumers carry the same wheel. Two repos on different versions is
+  drift.
+- `STATUS.md` still describes what the package holds.
 - The local `ruff` matches the pin. A local version below CI's reports fewer
   findings and produces a green run that CI then fails.

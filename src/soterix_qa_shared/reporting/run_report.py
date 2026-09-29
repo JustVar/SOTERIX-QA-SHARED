@@ -678,8 +678,8 @@ def load_history(run_dir: Path, limit: int = HISTORY_RUNS) -> list[dict]:
     """The earlier runs of this target the page compares with, newest
     first: {'name', 'started', 'utc_offset', 'outcomes', 'errors'} each. At most
     limit - 1 of them, so that with this run the window holds `limit`.
-    'utc_offset' is the earlier run's own: a page built on a laptop showed the
-    times of earlier box runs in the laptop's zone, 5 hours off (audit 09/21/2026)."""
+    'utc_offset' is the earlier run's own: a page built on a laptop once showed the
+    times of earlier runs from a machine on UTC in the laptop's zone, 5 hours off."""
     history = []
     for earlier in find_earlier_runs(run_dir, limit - 1):
         summary = load_summary(earlier)
@@ -1675,6 +1675,7 @@ def _render_provenance(summary: dict, product: str = '') -> str:
         f'{label} {prov[key]}' for label, key in
         (('Playwright', 'playwright'), ('Pytest-Playwright', 'pytest_playwright')) if prov.get(key))
     env = str(prov.get('env')).upper() if prov.get('env') else None
+    # Box is the tenant label an older archive may carry; an empty fact is skipped below.
     facts = (('Env', env), ('Box', prov.get('box')), ('Tenant', prov.get('base_url_host')),
              ('Machine', prov.get('host')), ('Operator', prov.get('operator')),
              ('Account', prov.get('account')),
@@ -1695,7 +1696,7 @@ def _fact(label: str, value_html: str, lead: bool = False, tone: str = '') -> st
     """One labelled fact of the run header: a small muted label above a bold value.
 
     The header was 2 lines of 'Label: value' pairs in one colour, and a reader could not
-    find the box or the machine in it (Justin, 09/21/2026). `tone` is 'pass' or 'fail'
+    find the tenant or the machine in it. `tone` is 'pass' or 'fail'
     for the outcome: a coloured word with a dot before it."""
     classes = 'fact' + (' lead' if lead else '') + (f' {tone}' if tone else '')
     return f'<div class="{classes}"><dt>{escape(label)}</dt><dd>{value_html}</dd></div>'

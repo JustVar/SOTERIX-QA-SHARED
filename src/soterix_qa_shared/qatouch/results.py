@@ -92,9 +92,9 @@ class RunContext:
     started: datetime
     ended: datetime
     env: str = 'unknown'
-    # The tenant within the env. One env can hold several (India and US both
-    # run on ENV=qa), so env alone cannot say which tenant a run hit. Empty
-    # when the consumer sets no BOX.
+    # An optional tenant label, for a consumer whose one env holds several
+    # tenants. The reporter leaves it empty; the ledger writes it only when
+    # set, so rows from a one-tenant repo carry no such key.
     box: str = ''
     target: tuple[str, ...] = ()
     exitstatus: int | None = None
@@ -153,8 +153,8 @@ def _locked_append(path: Path, text: str, timeout: float = 10.0) -> None:
     """Append `text` to `path` under the file lock.
 
     A plain `open(path, 'a')` is NOT atomic across handles on Windows, and
-    two armed runs sharing a clone (a nightly overlapping a manual run on
-    the box) then lose a whole row with no corruption to show for it.
+    two armed runs sharing a clone (a scheduled run overlapping a manual
+    run) then lose a whole row with no corruption to show for it.
     Measured: 40 concurrent appends produced 38 lines. Silent loss is the
     exact class the ledger exists to prevent, so the append takes the lock.
     """

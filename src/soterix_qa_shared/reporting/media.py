@@ -207,13 +207,13 @@ def _drain_drag_captures(page: Any, cap: int = DRAG_CAPTURE_MAX) -> list:
 
 # ---------------------------------------------------------------- the watchdog
 #
-# 09/11/2026, spartan1: two xdist workers spun at 100% CPU for two hours
+# On a Linux runner, two xdist workers once spun at 100% CPU for two hours
 # inside page.screenshot() in this plugin's makereport hook. Their
 # Playwright driver (node) had died, but the Chrome children still held its
 # pipes open, so Python never saw EOF and the sync API's wait loop never
 # returned. pytest-timeout could not help: its signal lands inside the
 # asyncio loop step, which logs the exception and carries on. The whole
-# nightly then waits for the run cap. Two defences, both cheap:
+# scheduled run then waits for the run cap. Two defences, both cheap:
 #   1. do not ask a dead driver for a screenshot (_driver_alive);
 #   2. a wall-clock watchdog on the call; when it expires in an xdist
 #      worker, the worker exits and the controller marks the test failed
@@ -238,7 +238,7 @@ def _driver_alive(page: Any) -> bool | None:
     True/False when it can be told, None when it cannot (another
     transport, no /proc on this platform, a private attribute renamed).
     Reads Playwright internals on purpose: the public API has no such
-    question, and asking a dead driver is what hung the nightly.
+    question, and asking a dead driver is what hung a whole run.
     """
     try:
         proc = page._impl_obj._connection._transport._proc

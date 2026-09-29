@@ -96,7 +96,7 @@ no hype words.
 ## Cross-Platform
 
 Development is on Windows and CI is on Linux, so anything touching a path
-is suspect until the matrix has run it.
+is suspect until CI has run it.
 
 `Path('C:/')` is an absolute 101-character path on Windows and a RELATIVE
 path on Linux, where it resolved against the checkout directory and measured

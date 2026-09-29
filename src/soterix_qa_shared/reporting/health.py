@@ -100,8 +100,6 @@ FULL_RUN_TITLE = 'Mean duration of the runs that ran the whole module folder, wi
 
 # ---------------------------------------------------------------- load
 
-BY_BOX_TITLE = 'The pass rate on each box (tenant) apart. One box can be green while the other is red.'
-
 
 def load_runs(runs_dir: Path) -> list[dict]:
     """Every run folder with a readable summary.json, newest first."""
@@ -279,8 +277,6 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
         rows = summary_tests(summary)
         keys = run_modules(summary)
         # A run that recorded no product is named by its targets, never blank.
-        prov = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
-        box = str(prov.get('box') or '')
         product = (summary_product(summary)
                    or target_product(_targets(summary), default_key))
         run_products[name] = product
@@ -331,15 +327,12 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
             titles.setdefault(nodeid, title)
             history.setdefault(nodeid, []).append({
                 'run': name, 'started': started, 'outcome': outcome, 'seconds': seconds,
-                'title': title, 'module': module, 'box': box})
+                'title': title, 'module': module})
             mod = modules[module_key(nodeid)]
-            tally = mod['by_box'].setdefault(box, {'passed': 0, 'failed': 0})
             if outcome in PASSED_OUTCOMES:
                 mod['passed'] += 1
-                tally['passed'] += 1
             elif outcome in FAILURE_OUTCOMES:
                 mod['failed'] += 1
-                tally['failed'] += 1
 
     # Every test that failed at least once in its strip, with the facts
     # the strip shows, and how many of them each module and product saw.
@@ -353,8 +346,7 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
         newest = results[0]
         key = module_key(nodeid)
         watch.append({'nodeid': nodeid, 'title': newest['title'], 'module': newest['module'],
-                      'module_name': module_name(key), 'facts': facts,
-                      'boxes': box_facts(results[:HISTORY_RUNS])})
+                      'module_name': module_name(key), 'facts': facts})
         watch_by_module[key] = watch_by_module.get(key, 0) + 1
         failing_runs = {b['run'] for b in facts['blocks'] if b['outcome'] in FAILURE_OUTCOMES}
         for product in {run_products[run] for run in failing_runs if run in run_products}:
@@ -385,10 +377,6 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
             'module': mod['module'], 'name': mod['name'], 'runs': len(mod['runs']),
             'passed': mod['passed'], 'failed': mod['failed'],
             'pass_rate': _rate(mod['passed'], mod['failed']),
-            # One tenant can be green while the other is red: pooled, a module at 50% on us
-            # and 100% on india read 75% and named no box. '' is a run that recorded no box.
-            'by_box': {b: {'passed': t['passed'], 'failed': t['failed'], 'rate': _rate(t['passed'], t['failed'])}
-                       for b, t in sorted(mod['by_box'].items()) if b},
             'mean_full_run_s': _mean(mod['full_durations']),
             'full_runs': len(mod['full_durations']),
             'advisories': mod['advisories'], 'watch': watch_by_module.get(mod['module'], 0),
@@ -420,45 +408,6 @@ def aggregate(runs: Iterable[dict], last_n: int = DEFAULT_LAST,
     }
 
 
-def box_facts(results: list[dict]) -> dict[str, dict]:
-    """Failures and runs of one test on each box, from the results its strip shows.
-
-    {'india': {'failed': 0, 'runs': 6}, 'us': {'failed': 4, 'runs': 4}}. A result with no
-    recorded box is left out: a run from before the archive recorded the box names none.
-    """
-    out: dict[str, dict] = {}
-    for r in results:
-        box = str(r.get('box') or '')
-        if not box or r['outcome'] not in PASSED_OUTCOMES + FAILURE_OUTCOMES:
-            continue
-        t = out.setdefault(box, {'failed': 0, 'runs': 0})
-        t['runs'] += 1
-        t['failed'] += 1 if r['outcome'] in FAILURE_OUTCOMES else 0
-    return dict(sorted(out.items()))
-
-
-def merge_box_facts(many: list[dict[str, dict]]) -> dict[str, dict]:
-    """The box facts of the variants of one test, added up."""
-    out: dict[str, dict] = {}
-    for facts in many:
-        for box, t in facts.items():
-            o = out.setdefault(box, {'failed': 0, 'runs': 0})
-            o['failed'] += t['failed']
-            o['runs'] += t['runs']
-    return dict(sorted(out.items()))
-
-
-def boxes_line(boxes: dict[str, dict]) -> str:
-    """'only on us: 4 of 4' when 1 of several boxes fails, else each box's count. '' with fewer than 2 boxes."""
-    if len(boxes) < 2:
-        return ''
-    failing = [b for b, t in boxes.items() if t['failed']]
-    parts = [f'{b} {t["failed"]} of {t["runs"]}' for b, t in boxes.items()]
-    if len(failing) == 1:
-        return f'fails only on {failing[0]}: ' + ', '.join(parts)
-    return 'failed runs by box: ' + ', '.join(parts)
-
-
 def _param_label(nodeid: str) -> str:
     """The part that tells 2 variants of one test apart: 'test_x[chromium-cam-7]' -> 'chromium-cam-7'."""
     start = nodeid.find('[')
@@ -485,7 +434,6 @@ def group_watch(watch: list[dict], variants_of: Mapping[str, int]) -> list[dict]
             'worst': worst, 'variants': variants, 'variant_total': max(variants_of.get(base, 0), len(variants)),
             'rate': worst['facts']['rate'] or 0.0,
             'failed': sum(v['facts']['failed'] for v in variants),
-            'boxes': merge_box_facts([v.get('boxes') or {} for v in variants]),
             'last_failure': max(failures, key=lambda b: str(b.get('started') or '')) if failures else None,
         })
     modules: dict[str, dict] = {}
@@ -507,7 +455,7 @@ def _module_row(modules: dict[str, dict], key: str, name: str, started: str,
                 exitstatus: object) -> dict:
     return modules.setdefault(key, {
         'module': key, 'name': module_name(key), 'runs': [], 'passed': 0, 'failed': 0,
-        'unrecorded_failed': 0, 'full_durations': [], 'advisories': 0, 'products': [], 'by_box': {},
+        'unrecorded_failed': 0, 'full_durations': [], 'advisories': 0, 'products': [],
         'newest_run': name, 'newest_started': started, 'newest_exit': exitstatus})
 
 
@@ -660,7 +608,6 @@ def render_health(agg: dict, generated: str | None = None,
         return [
             _module_cell(m, runs_dir),
             _num(str(m['runs'])), _num(_pct(m['pass_rate'])),
-            _cell(' &middot; '.join(f'{escape(b)} {_pct(t["rate"])}' for b, t in (m.get('by_box') or {}).items()) or '-'),
             _num(f"{m['passed']} / {m['failed']}"), _num(_secs(m['mean_full_run_s'])),
             # The count spans the window. The link opens the newest run's lines.
             _num(str(m['advisories'])) if not m['advisories'] else
@@ -670,7 +617,7 @@ def render_health(agg: dict, generated: str | None = None,
                   f"<div class=\"case\">{outcome_html(m['newest_exit'])}</div>"),
         ]
 
-    module_headers = ['Module', 'Runs', 'Pass rate', ('By box', BY_BOX_TITLE), 'Passed / Failed',
+    module_headers = ['Module', 'Runs', 'Pass rate', 'Passed / Failed',
                       ('Mean full run', FULL_RUN_TITLE), ('Notes', NOTES_TITLE), 'Newest run']
     # One block per product: its heading, the verdict lines of its
     # modules, then their table.
@@ -695,16 +642,14 @@ def render_health(agg: dict, generated: str | None = None,
 
     def watch_row(row: dict) -> list[str]:
         variants = row['variants']
-        by_box = boxes_line(row.get('boxes') or {})
-        by_box_html = f'<div class="by-box">{escape(by_box)}</div>' if by_box else ''
         if row['variant_total'] <= 1:
             w = variants[0]
-            return [_cell(_test_cell(w) + by_box_html), _cell(strip_of(w)), _rate_cell(w['facts']),
+            return [_cell(_test_cell(w)), _cell(strip_of(w)), _rate_cell(w['facts']),
                     _cell(_failure_link(w['facts']['last_failure'], runs_dir))]
         items = ''.join(
             f'<li><code>{escape(_param_label(v["nodeid"]))}</code> {strip_of(v)} '
             f'<span class="nodeid">{_pct(v["facts"]["rate"])}</span></li>' for v in variants)
-        folded = (f'{escape(row["title"])}<div class="nodeid">{escape(row["base"])}</div>{by_box_html}'
+        folded = (f'{escape(row["title"])}<div class="nodeid">{escape(row["base"])}</div>'
                   f'<details class="runs"><summary>{len(variants)} of {row["variant_total"]} variants failed: show them</summary>'
                   f'<ul class="variants">{items}</ul></details>')
         return [_cell(folded), _cell(strip_of(row['worst']) + '<div class="nodeid">the worst variant</div>'),
@@ -762,7 +707,6 @@ details.watch-module td:nth-child(2) {{ white-space: nowrap; }}
 details.watch-module > summary .count {{ color: var(--muted); font-size: .9rem; }}
 ul.variants {{ list-style: none; padding-left: 0; }}
 ul.variants li {{ display: flex; gap: .6rem; align-items: center; margin: .15rem 0; }}
-.by-box {{ font-size: .82rem; color: var(--skip); margin-top: .15rem; }}
 .watch-tools {{ margin: .4rem 0; display: flex; gap: .5rem; }}
 .watch-tools button {{ font: inherit; padding: .2rem .7rem; border: 1px solid var(--line); border-radius: 4px;
   background: var(--card); color: var(--fg); cursor: pointer; }}

@@ -107,7 +107,7 @@ def _root_of_length(total):
     plus padding.
     That literal is 101 characters on Windows and a RELATIVE path on Linux,
     where abspath resolves it against the working directory and the length
-    depends on where CI checked the repo out. The interpreter matrix caught
+    depends on where CI checked the repo out. CI on Linux caught
     it on its first run: 101 intended, 154 measured.
 
     Not pytest's tmp_path either: that carries the test name and is already

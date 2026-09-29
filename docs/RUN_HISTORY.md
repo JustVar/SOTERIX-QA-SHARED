@@ -41,7 +41,7 @@ a flag. `--no-history` opts out of a single armed run.
 
 ```json
 {"at": "2026-08-28T19:37:45+00:00", "branch": "main", "commit": "0f912d0",
- "env": "qa", "box": "india", "run_key": "d6pw", "project_key": "JlW1", "target": ["tests/ui"],
+ "env": "qa", "run_key": "d6pw", "project_key": "JlW1", "target": ["tests/ui"],
  "dur_s": 1840.0, "exit": 1,
  "counts": {"passed": 598, "failed": 2, "skipped": 4},
  "failed": ["tests/ui/views/test_views_basic.py::test_grid"]}

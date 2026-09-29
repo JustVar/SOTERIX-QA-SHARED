@@ -2,7 +2,7 @@
 
 The reporter plugin is deliberately NOT imported here. It needs pytest,
 and pytest is an extra rather than a base dependency so a script-only
-consumer (the UI canary job) does not drag a test runner in. Import it
+consumer (a script that only reads QA Touch) does not drag a test runner in. Import it
 as `soterix_qa_shared.qatouch.reporter`.
 """
 from .client import (

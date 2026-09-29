@@ -1,91 +1,47 @@
 name: ci
 
-# Two repos WILL install this package and run their whole test suite through
-# it, at migration steps 5 and 6. Neither does yet: the UI repo has the
-# shims only on a rehearsal branch and the API repo does not reference the
-# package at all. When they do, a quiet defect here is a quiet defect
-# everywhere, which is what every job below is for. Each guards a failure
-# mode that was reproduced, not imagined. See docs/RULES.md.
+# Two repos install this package as a built wheel from their own vendor/
+# folder and run their whole test suite through it, so a quiet defect here
+# is a quiet defect everywhere. Each job below guards a failure mode that
+# was reproduced, not imagined. See docs/RULES.md.
 #
-# Nothing here needs a credential. The tests are offline by construction:
-# no network, no browser, no QA Touch key.
-#
-# The tag trigger was removed on 09/22/2026 to save Actions minutes, which silently killed
-# tag-matches-version: its `refs/tags/` guard was never true again, so nothing checked that a
-# release tag matches [project] version. spartan1 runs these jobs for nothing now, so the tag
-# trigger is back and the guard works as written.
+# Nothing here needs a credential, a repository variable or a machine of
+# our own. The tests are offline by construction: no network, no browser,
+# no QA Touch key. Every job runs on GitHub's machines, one interpreter,
+# on every push and pull request. Nothing is scheduled.
 
 # Each action is pinned to a commit SHA, with its version in the comment beside it.
-# A tag moves: `actions/checkout@v4` is whatever that tag points at today, and
-# webfactory/ssh-agent is handed a private key. Dependabot reads the comment and
-# keeps the pin current, so this costs nothing to maintain.
+# A tag moves: `actions/checkout@v4` is whatever that tag points at today.
+# Dependabot reads the comment and keeps the pin current.
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
   pull_request:
-  schedule:
-    # Sunday 06:20 UTC: the full interpreter matrix, which a push no longer runs.
-    - cron: '20 6 * * 0'
   workflow_dispatch:
-    inputs:
-      hosted:
-        description: "Run on GitHub's runners instead of spartan1 (use when the box is down)"
-        type: boolean
-        default: false
 
-# A pull request NEVER runs on spartan1. A workflow file is part of the branch, so anyone who can
-# open a pull request could otherwise run whatever they wrote as the runner's own user, on the box
-# that also runs the nightly, with the secrets the job is given (audit 09/22/2026). Pull requests
-# go to GitHub's machines, where that costs an attacker a throwaway container.
-#
-# spartan1 runs the rest and costs no Actions minutes. Three ways back to GitHub's machines:
-# the `hosted` input on a manual run; the repository variable CI_RUNNER=hosted, which is the one
-# that reaches a push (a dispatch input is null on every automatic event); and the weekly run,
-# which goes there on purpose.
-#
-# The weekly run is hosted because spartan1 never uses the QA_SHARED_DEPLOY_KEY secret: ghrunner
-# has its own on-disk key and `IdentitiesOnly yes` ignores the agent. A revoked or wrong secret
-# would pass green here and fail only on the fallback, which is the one path used in an outage.
-# Once a week the secret is used, the hosted path is proven, and the full interpreter matrix runs.
-# That is about 15 job-minutes a week against a 2000 minute month. The fallback is the dispatch input
-# above: if the box is off, run this workflow by hand with `hosted` ticked. The runner there is
-# ghrunner, which cannot read the nightly's .env and cannot write the published archive.
-
-# Every job here checks out and runs tests. Nothing writes to the repo, so
-# nothing needs more than read. The sibling repo's qa-nightly.yml already
-# scopes its token this way; these should not be looser than the file they
-# sit beside.
-# One runner for this repo, so a superseded push must stand down rather than queue.
+# A superseded push stands down rather than queue.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job checks out and runs tests. Nothing writes to the repo, so
+# nothing needs more than read.
 permissions:
   contents: read
 
 jobs:
-  # The interpreter range is a claim until something exercises it.
-  # pyproject says >=3.11; the API repo's gate runs 3.12 and UI dev runs
-  # 3.14. Before this matrix, only 3.14 was ever run.
-  #
-  # 1 version on a push, all 4 on the weekly run or by hand. GitHub bills each
-  # JOB rounded up to a whole minute, so these 4 jobs of 16 to 28 seconds cost
-  # 4 minutes of the allowance for about 90 seconds of work. At 90 percent of a
-  # 2000 minute month (09/22/2026) that is the largest saving available here.
+  # One interpreter: the version both consumers run. pyproject declares
+  # >=3.11, and that floor is not exercised here.
   test:
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ${{ (contains(fromJSON('["push","pull_request"]'), github.event_name) && fromJSON('["3.14"]')) || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: A venv of its own, so a job never inherits the last job's packages
+          python-version: "3.14"
+      - name: A venv of its own, so the job never inherits another job's packages
         run: |
           python -m venv .civenv
           echo "$PWD/.civenv/bin" >> "$GITHUB_PATH"
@@ -103,17 +59,15 @@ jobs:
   # pytest, which is what rule 2's exc.name check depends on.
   #
   # Every step below runs inside a venv this job makes, not the interpreter
-  # setup-python hands over. On a runner that keeps its tool cache between
-  # jobs, pytest was already there from the test job, "a base install" was not
-  # base, and the extras check passed nothing (first self-hosted run on
-  # spartan1, 09/22/2026). A venv makes the check mean the same on any runner.
+  # setup-python hands over, so "a base install" is really base whatever
+  # the runner has cached.
   wheel:
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: A venv of its own, so a base install is really base
         run: |
           python -m venv .wheelvenv
@@ -174,17 +128,17 @@ jobs:
           python -c "import soterix_qa_shared.qatouch.reporter; print('ok')"
 
   # Rule 4. With [project] version unchanged, `pip install -r requirements`
-  # against a new tag pin is a silent exit-0 no-op that leaves the old code
+  # against a new wheel is a silent exit-0 no-op that leaves the old code
   # installed. -U does not rescue it. A tag that does not match the version
-  # is therefore a tag that consumers cannot pin to.
+  # is therefore a tag whose wheel no consumer can install.
   tag-matches-version:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event.inputs.hosted == 'true' || vars.CI_RUNNER == 'hosted') && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: The tag must equal [project] version
         run: |
           python - <<'PY'
@@ -200,7 +154,7 @@ jobs:
           if tag.removeprefix("v") != version:
               sys.exit(
                   f"tag {tag} does not match [project] version {version}.\n"
-                  "A consumer pinning this tag would install the previous code, "
+                  "A consumer given this tag's wheel would install the previous code, "
                   "silently, with exit 0."
               )
           print(f"ok: tag {tag} matches version {version}")

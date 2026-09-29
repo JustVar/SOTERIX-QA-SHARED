@@ -756,7 +756,7 @@ def test_build_run_report_shows_titles_facts_and_change_chips(tmp_path):
                  '<span>Browser</span><span>Chromium / Chrome</span>', '<span>Playwright</span><span>1.62.0</span>',
                  '<span>pytest-playwright</span><span>0.9.0</span>'):
         assert fact in details
-    # The box sits between the environment and the tenant: the two boxes share a tenant host.
+    # An older archive's tenant label (box) still renders, between the environment and the tenant host.
     assert details.index('<span>Environment</span>') < details.index('<span>Box</span>') < details.index('<span>Tenant</span>')
     assert '<div><span>Box</span>us</div>' in page and '<div><span>Commit</span>abc1234</div>' in page
     assert '<p class="verdict"><em class="tone-fail">1 of 3 failed.</em> 1 cause.</p>' in page
@@ -1431,15 +1431,16 @@ def test_provenance_line_names_machine_account_and_the_chrome_that_ran_it():
     account, on which Chrome, and whether a newer stable is out; the tenant
     host reads as Tenant, not Host, now that the machine is a fact too."""
     from soterix_qa_shared.reporting import run_report as rr
-    summary = {'provenance': {'env': 'qa', 'box': 'india', 'base_url_host': 'vsaas-qa.example',
-                              'host': 'spartan1', 'operator': 'soterix', 'account': 'justin',
+    summary = {'provenance': {'env': 'qa', 'base_url_host': 'vsaas-qa.example',
+                              'host': 'runner-1', 'operator': 'qa', 'account': 'qa-account',
                               'browser': 'chromium', 'browser_channel': 'chrome',
                               'browser_version': '153.0.8010.36', 'browser_latest': '153.0.8010.47',
                               'git_commit': 'b8ca3f8'}}
     html = rr._render_provenance(summary, 'NexaiQ-Core')
-    # each fact is a label above its value, so a reader finds the box or the machine at a glance
-    for span in ('<dt>Tenant</dt><dd>vsaas-qa.example</dd>', '<dt>Machine</dt><dd>spartan1</dd>',
-                 '<dt>Operator</dt><dd>soterix</dd>', '<dt>Account</dt><dd>justin</dd>',
+    assert 'Box' not in html   # no tenant label was recorded, so no Box fact
+    # each fact is a label above its value, so a reader finds the tenant or the machine at a glance
+    for span in ('<dt>Tenant</dt><dd>vsaas-qa.example</dd>', '<dt>Machine</dt><dd>runner-1</dd>',
+                 '<dt>Operator</dt><dd>qa</dd>', '<dt>Account</dt><dd>qa-account</dd>',
                  '<dt>Browser</dt><dd>Chromium / Chrome 153.0.8010.36 <span class="note">(stable 153.0.8010.47 is out)</span></dd>'):
         assert span in html, span
     assert 'Host:' not in html
@@ -1591,11 +1592,11 @@ def test_a_records_known_defect_comes_from_the_run_record_and_only_as_a_dict(tmp
     run.mkdir()
     (run / 'summary.json').write_text(json.dumps({'tests': [
         {'nodeid': 'tests/a.py::test_a[chromium]', 'outcome': 'failed',
-         'known_defect': {'row': 56, 'since': '09/12/2026', 'what': 'CSP refuses the data URL'}},
+         'known_defect': {'since': '09/12/2026', 'what': 'CSP refuses the data URL'}},
         {'nodeid': 'tests/a.py::test_b[chromium]', 'outcome': 'failed', 'known_defect': 'not a dict'},
         {'nodeid': 'tests/a.py::test_c[chromium]', 'outcome': 'passed'},
     ]}), encoding='utf-8')
     recs, _ = rr.collect_tests(run)
-    assert recs['tests/a.py::test_a[chromium]'].known == {'row': 56, 'since': '09/12/2026', 'what': 'CSP refuses the data URL'}
+    assert recs['tests/a.py::test_a[chromium]'].known == {'since': '09/12/2026', 'what': 'CSP refuses the data URL'}
     assert recs['tests/a.py::test_b[chromium]'].known is None
     assert recs['tests/a.py::test_c[chromium]'].known is None

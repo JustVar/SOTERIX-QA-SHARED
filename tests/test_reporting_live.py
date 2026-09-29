@@ -8,24 +8,22 @@ from pathlib import Path
 from soterix_qa_shared.reporting import live
 
 
-def _summary(folder: Path, target, box, tests, duration_s):
+def _summary(folder: Path, target, tests, duration_s, provenance=None):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / 'summary.json').write_text(json.dumps({
-        'target': target, 'duration_s': duration_s, 'provenance': {'env': 'qa', 'box': box},
+        'target': target, 'duration_s': duration_s, 'provenance': provenance or {'env': 'qa'},
         'tests': [{'nodeid': n, 'duration_s': d, 'outcome': 'passed'} for n, d in tests.items()],
     }), encoding='utf-8')
 
 
-def test_live_paths_add_the_served_dir_only_when_set(tmp_path):
-    """The archive dir always; the served dir when QA_RUNS_LIVE_DIR names one."""
-    assert live.live_paths(tmp_path, {}) == [tmp_path / 'live.json']
-    assert live.live_paths(tmp_path, {'QA_RUNS_LIVE_DIR': str(tmp_path / 'served')}) == [
-        tmp_path / 'live.json', tmp_path / 'served' / 'live.json']
+def test_live_paths_is_the_file_beside_the_index(tmp_path):
+    """One path, beside the archive index. No environment variable adds another."""
+    assert live.live_paths(tmp_path) == [tmp_path / 'live.json']
 
 
 def test_write_and_clear_live_are_atomic_and_forgiving(tmp_path):
     """The record lands whole in every writable path, and clearing a missing file is not an error."""
-    paths = live.live_paths(tmp_path, {'QA_RUNS_LIVE_DIR': str(tmp_path / 'served')})
+    paths = live.live_paths(tmp_path) + [tmp_path / 'mirror' / 'live.json']
     live.write_live(paths, {'state': 'running', 'done': 3})
     for p in paths:
         assert json.loads(p.read_text(encoding='utf-8')) == {'state': 'running', 'done': 3}
@@ -35,17 +33,19 @@ def test_write_and_clear_live_are_atomic_and_forgiving(tmp_path):
     live.clear_live(paths)  # already gone: still fine
 
 
-def test_history_reads_only_the_same_target_and_box_newest_first(tmp_path):
-    """Other targets, other boxes and folders without a summary (a killed run) are not history."""
-    _summary(tmp_path / '2026-09-08_04-00-00__tests-ui', ['tests/ui'], 'us', {'a': 10}, 3600)
-    _summary(tmp_path / '2026-09-09_04-00-00__tests-ui', ['tests/ui'], 'us', {'a': 12}, 3700)
-    _summary(tmp_path / '2026-09-09_05-00-00__tests-ui', ['tests/ui'], 'india', {'a': 99}, 9000)
-    _summary(tmp_path / '2026-09-09_06-00-00__tests-ui-maps', ['tests/ui/maps'], 'us', {'a': 1}, 60)
+def test_history_reads_only_the_same_target_newest_first(tmp_path):
+    """Other targets and folders without a summary (a killed run) are not history. A run
+    archived by an older version with a tenant label in its provenance is history like any other."""
+    _summary(tmp_path / '2026-09-08_04-00-00__tests-ui', ['tests/ui'], {'a': 10}, 3600)
+    _summary(tmp_path / '2026-09-09_04-00-00__tests-ui', ['tests/ui'], {'a': 12}, 3700)
+    _summary(tmp_path / '2026-09-09_05-00-00__tests-ui', ['tests/ui'], {'a': 99}, 9000,
+             provenance={'env': 'qa', 'box': 'old-label'})
+    _summary(tmp_path / '2026-09-09_06-00-00__tests-ui-maps', ['tests/ui/maps'], {'a': 1}, 60)
     (tmp_path / '2026-09-10_04-00-00__tests-ui').mkdir()  # the cap killed it: no summary
-    found = live.history(tmp_path, ['tests/ui'], 'us', last=5)
-    assert [s['duration_s'] for s in found] == [3700, 3600]
-    assert live.history(tmp_path, ['tests/ui'], 'us', last=1)[0]['duration_s'] == 3700
-    assert live.history(tmp_path / 'nowhere', ['tests/ui'], 'us') == []
+    found = live.history(tmp_path, ['tests/ui'], last=5)
+    assert [s['duration_s'] for s in found] == [9000, 3700, 3600]
+    assert live.history(tmp_path, ['tests/ui'], last=1)[0]['duration_s'] == 9000
+    assert live.history(tmp_path / 'nowhere', ['tests/ui']) == []
 
 
 def test_median_durations_and_estimate_from_per_test_history():
@@ -58,7 +58,7 @@ def test_median_durations_and_estimate_from_per_test_history():
     eta, basis = live.estimate_remaining_s(['a', 'b', 'new'], durations, workers=2, summaries=summaries)
     # a 20 + b 30 + new at the median of known (25) = 75 s of work over 2 workers
     assert eta == 37.5
-    assert basis == 'per-test durations from 3 earlier runs of this target on this box'
+    assert basis == 'per-test durations from 3 earlier runs of this target'
 
 
 def test_estimate_falls_back_to_run_totals_then_to_none():
@@ -69,23 +69,23 @@ def test_estimate_falls_back_to_run_totals_then_to_none():
     assert live.estimate_remaining_s(['x'], {}, 4, runs, elapsed_s=99999)[0] == 0
     eta, basis = live.estimate_remaining_s(['x'], {}, 4, [], elapsed_s=0)
     assert eta is None
-    assert basis == 'no earlier run of this target on this box, so no estimate'
+    assert basis == 'no earlier run of this target, so no estimate'
 
 
 def test_build_record_carries_what_the_banner_shows(tmp_path):
     """Progress, counts, the current test, elapsed and the estimate with its basis."""
-    _summary(tmp_path / '2026-09-09_04-00-00__tests-ui', ['tests/ui'], 'us',
+    _summary(tmp_path / '2026-09-09_04-00-00__tests-ui', ['tests/ui'],
              {'t1': 10, 't2': 20, 't3': 30}, 3600)
     record = live.build_record(
-        started=1000.0, now=1100.0, target=['tests/ui'], box='us', env='qa', product='NexaiQ-Core',
+        started=1000.0, now=1100.0, target=['tests/ui'], env='qa', product='NexaiQ-Core',
         workers=2, collected=3, counts={'passed': 1, 'failed': 0, 'skipped': 0, 'errors': 0},
-        current='t2', remaining=['t2', 't3'], runs_dir=tmp_path, hostname='spartan1')
+        current='t2', remaining=['t2', 't3'], runs_dir=tmp_path, hostname='runner-1')
     assert record['state'] == 'running'
     assert (record['done'], record['collected'], record['current']) == (1, 3, 't2')
     assert record['elapsed_s'] == 100.0
     assert record['eta_s'] == 25.0            # (20 + 30) / 2 workers
     assert record['eta_basis'].startswith('per-test durations from 1 earlier run')
-    assert record['box'] == 'us' and record['host'] == 'spartan1'
+    assert record['host'] == 'runner-1' and 'box' not in record
     assert record['stale_after_s'] == live.STALE_AFTER_S
 
 

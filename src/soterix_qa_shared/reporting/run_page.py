@@ -37,17 +37,18 @@ from soterix_qa_shared.reporting.run_report import _OUTCOME_RANK
 if TYPE_CHECKING:
     from soterix_qa_shared.reporting.run_report import RunLinks, TestRecord
 
-# The 2 views of the clock switch: the team's own time on the 12 hour clock, and India
-# time on the 24 hour clock (Justin, 09/21/2026). The zone is named in both views: people
-# in 2 countries read this page, and a bare "15:55" does not say whose clock it is.
+# The 2 views of the clock switch: one zone on the 12 hour clock and one on the 24 hour
+# clock. The zone is named in both views: people in 2 countries read this page, and a
+# bare "15:55" does not say whose clock it is. A team in other zones edits these 2 lines.
 ZONE_12H = 'America/Chicago'
 ZONE_24H = ('Asia/Kolkata', 'IST')
 
 BROWSERS = ('chromium', 'firefox', 'webkit', 'chrome', 'msedge')
 MAP_MAX_COLUMNS = 40
 
-# What a reader does when the trace is not in the archive. deploy/spartan1/README.md holds the full steps.
-TRACE_RECIPE = ('Ask the QA lead for it, or copy it from the machine and open it with '
+# What a reader does when the trace is not in the archive: the zip stays on the machine
+# that ran the tests, under reports/runs/<run>/, and Playwright opens it from any machine.
+TRACE_RECIPE = ('Ask the person who ran it, or copy it from that machine and open it with '
                 'python -m playwright show-trace. Traces are kept for a few days.')
 _FOLDER_STAMP_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})[ _T](\d{2})-(\d{2})-(\d{2})$')
 _UTC_OFFSET_RE = re.compile(r'^([+-])([01]\d|2[0-3]):?([0-5]\d)$')
@@ -85,8 +86,8 @@ def utc_iso(naive: str | None, utc_offset: str | None = None) -> str:
 
     summary.json holds the time of the machine that ran the tests, with no zone. A run
     since schema 6 records its `utc_offset`. For an older run the offset is the one of
-    the machine that builds the page, on that date: the box builds the pages of its own
-    runs, and both are on UTC.
+    the machine that builds the page, on that date: a machine builds the pages of its own
+    runs, so its zone is the best guess.
     """
     text = str(naive or '').strip()
     stamp = _FOLDER_STAMP_RE.match(text)
@@ -208,8 +209,8 @@ def column_name(axis: dict | None, nodeid: str) -> str:
 
 def shared_line(lines: Sequence[str]) -> str:
     """One line for several errors that differ in a name or a number: the words they
-    share, with '...' where they differ. 'Camera 10.2.0.129 reports' and 'Camera
-    10.2.0.171 reports' read as 'Camera ... reports'."""
+    share, with '...' where they differ. 'Camera 3 reports' and 'Camera 7 reports'
+    read as 'Camera ... reports'."""
     lines = [line for line in lines if line]
     if not lines:
         return ''
@@ -326,8 +327,8 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
             if rel.lower().endswith('.zip'):
                 evidence.append(f'<pre>python -m playwright show-trace "{escape(os.path.abspath(run_dir / rel))}"</pre>')
         else:
-            # The nightly copies a run to the served directory without its zips, so a link here
-            # would 404 for every reader (audit 09/22/2026). Say where the trace is instead.
+            # A run copied elsewhere without its zips would give every reader a 404 here.
+            # Say where the trace is instead.
             evidence.append(_lab('Trace') + f'<p class="sub">The trace of this test is kept on the machine that ran it, '
                             f'not in this archive: <code>{escape(run_dir.name)}/{escape(rel)}</code>. '
                             f'{escape(TRACE_RECIPE)}</p>')
@@ -347,9 +348,9 @@ def _test_template(index: int, rec: TestRecord, run_dir: Path, links: RunLinks,
     if rec.delta:
         facts.append(('Since the previous run', escape(rec.delta)))
     if rec.known:
-        head = ('Register row ' + escape(str(rec.known.get('row')))) if rec.known.get('row') else 'Reported'
-        if rec.known.get('since'):
-            head += ', since ' + escape(str(rec.known['since']))
+        # The label's shape is {'since', 'what'}; an older record may also carry a
+        # register row number, which is history and is not shown.
+        head = ('Reported since ' + escape(str(rec.known['since']))) if rec.known.get('since') else 'Reported'
         facts.append(('Known defect', f'{head}: {escape(str(rec.known.get("what") or ""))}'))
     if failed and rec.signature:
         if rec.seen is None:
@@ -406,6 +407,7 @@ def _run_template(summary: Mapping[str, Any], run_dir: Path, product: str, targe
                  ('Ended', time_html(summary.get('ended'), offset, friendly_stamp(summary.get('ended')))
                   if summary.get('ended') else ''),
                  ('Duration', escape(duration)), ('Commit', text('git_commit')), ('Folder', escape(run_dir.name))]),
+        # Box is the tenant label an older archive may carry; _kv drops the row when it is empty.
         ('Where', [('Environment', text('env').upper()), ('Box', text('box')), ('Tenant', text('base_url_host')),
                    ('Camera', camera_html), ('Machine', text('host')), ('Operator', text('operator')),
                    ('Account', text('account'))]),
@@ -452,9 +454,8 @@ def _known_chip(rec: TestRecord) -> str:
     if not rec.known:
         return ''
     from soterix_qa_shared.reporting.run_report import PASSED_OUTCOMES
-    row = rec.known.get('row')
     title = escape(str(rec.known.get('what') or ''), quote=True)
-    text = 'Known defect' + (f', row {escape(str(row))}' if row else '') + (', passed' if rec.outcome in PASSED_OUTCOMES else '')
+    text = 'Known defect' + (', passed' if rec.outcome in PASSED_OUTCOMES else '')
     return f'<span class="m k" title="{title}">{text}</span>'
 
 
@@ -465,11 +466,9 @@ def _known_defects_line(records: Sequence[TestRecord], failed: int) -> str:
     green = [r for r in records if r.known and r.outcome in PASSED_OUTCOMES]
     parts = []
     if red:
-        rows = sorted({str(r.known.get('row')) for r in red if r.known.get('row')}, key=lambda x: (len(x), x))
-        where = f" (register {'row' if len(rows) == 1 else 'rows'} {', '.join(rows)})" if rows else ''
         left = failed - len(red)
         parts.append(f"{len(red)} of the failures {'is a' if len(red) == 1 else 'are'} known "
-                     f"{'defect' if len(red) == 1 else 'defects'}{where}"
+                     f"{'defect' if len(red) == 1 else 'defects'}"
                      + (f", {plural(left, 'failure is', 'failures are')} to look at." if left > 0 else ': nothing new to look at.'))
     if green:
         parts.append(plural(len(green), 'known defect passed', 'known defects passed') + ': check whether to retire the entry.')
@@ -643,7 +642,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 
     # --- rows and pane templates
     has_run_log = (run_dir / 'log' / 'run.log').is_file()
-    # QA_TRACES_PUBLISHED=0 when the run will be copied somewhere without its zips (the nightly does).
+    # QA_TRACES_PUBLISHED=0 when the run will be copied somewhere without its trace zips.
     published_traces = (os.environ.get('QA_TRACES_PUBLISHED', '1') or '1').strip().lower() not in ('0', 'off', 'false', 'no')
     rows, templates, last_module = [], [], None
     used_ids: set[str] = set()
@@ -727,6 +726,7 @@ def render_run_page(run_dir: Path, summary: dict, tests: Mapping[str, TestRecord
 
     exitstatus = summary.get('exitstatus')
     from soterix_qa_shared.reporting.run_report import exit_outcome
+    # Box: the tenant label an older archive may carry; an empty fact is dropped below.
     facts = [('Duration', escape(duration)), ('Machine', escape(str(prov.get('host') or ''))),
              ('Box', escape(str(prov.get('box') or ''))), ('Commit', escape(str(prov.get('git_commit') or '')[:7]))]
     if exitstatus not in (0, 1, None):   # Interrupted, Error, Usage: the counts alone do not say it

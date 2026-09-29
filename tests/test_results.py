@@ -353,8 +353,8 @@ def test_an_unarmed_run_writes_no_ledger_row(tmp_path):
 
 
 def test_concurrent_armed_runs_lose_no_ledger_row(tmp_path):
-    """Two armed runs sharing a clone (a nightly overlapping a manual run on
-    the box) both append to the same month file. Windows open(path, "a") is
+    """Two armed runs sharing a clone (a scheduled run overlapping a manual
+    run) both append to the same month file. Windows open(path, "a") is
     not atomic across handles, so this measured 38 of 40 rows before the
     lock. Every row must survive now, with no corruption."""
     d = tmp_path / 'history'
@@ -468,20 +468,20 @@ def test_the_ledger_is_written_even_when_the_upload_fails(tmp_path):
     assert ledger.written is True
 
 
-def test_the_ledger_row_records_the_box_when_set(tmp_path):
-    """One env can hold several tenants (India and US both on ENV=qa), so the
-    row carries the box too - otherwise a reader cannot tell which tenant a
-    run hit."""
+def test_the_ledger_row_records_the_tenant_label_only_when_a_consumer_sets_it(tmp_path):
+    """RunContext.box is an optional label for a consumer whose one env holds
+    several tenants. The reporter never sets it; a consumer that does gets
+    it in the row."""
     sink = RunLedgerSink(tmp_path / 'history')
     sink.finish([_r('t::a', 'passed')],
-                _ctx(run_key='d6pw', env='qa', box='india', project_key='JlW1'))
+                _ctx(run_key='d6pw', env='qa', box='tenant-a', project_key='JlW1'))
     row = json.loads((tmp_path / 'history' / '2026-08.jsonl').read_text())
     assert row['env'] == 'qa'
-    assert row['box'] == 'india'
+    assert row['box'] == 'tenant-a'
 
 
 def test_the_ledger_row_omits_box_when_unset_so_old_rows_still_compare(tmp_path):
-    """A repo that sets no BOX writes no box key, so a single-tenant repo's
+    """With no label set the row has no box key, so a one-tenant repo's
     rows stay byte-for-byte what they were."""
     sink = RunLedgerSink(tmp_path / 'history')
     sink.finish([_r('t::a', 'passed')], _ctx(run_key='d6pw', env='qa'))

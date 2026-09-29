@@ -10,14 +10,32 @@ does 3 jobs:
   fewer tests than before.
 
 How it works: the package is a set of pytest plugins and command line
-tools. A test repository names the package in its `requirements.txt` at a
-fixed tag. Thin shim modules in that repository point at the package, so
-the old import paths still work. Thus each repository runs the same
-reporter, the same client and the same gates.
+tools. A test repository keeps a built wheel of the package in its
+`vendor/` folder and names it in `requirements.txt`. Thin shim modules in
+that repository point at the package, so the old import paths still work.
+Thus each repository runs the same reporter, the same client and the same
+gates.
 
 Two repositories use it: Soterix-WebApp-QA and Soterix-API-QA.
 
 ## Install
+
+A test repository installs the package from its own `vendor/` folder. Its
+`requirements.txt` holds two lines:
+
+```
+--find-links vendor
+soterix-qa-shared==0.38.0
+```
+
+pip resolves `vendor` relative to the requirements file, so
+`pip install -r requirements.txt` works from any folder, needs no access to
+this repository and needs no credential. A new engineer needs read access
+to the test repository and nothing else.
+
+To change the package, clone this repository beside a test repository and
+install it editable into that repository's venv. An editable install
+overrides the vendored wheel until the next `pip install -r requirements.txt`.
 
 ```bash
 pip install -e ../soterix-qa-shared              # client only
@@ -26,12 +44,29 @@ pip install -e "../soterix-qa-shared[jira]"      # adds the jira package
 pip install -e "../soterix-qa-shared[dev]"       # pytest, ruff, pytest-html
 ```
 
-A test repository does not install it this way. Its `requirements.txt`
-already names the package, so `pip install -r requirements.txt` is enough.
-Install it editable only to change it.
-
 The base install stays client-only on purpose. A script that reads QA Touch
 does not need a test runner.
+
+### Release a New Version
+
+A change here reaches a test repository only as a new wheel in its
+`vendor/` folder. The steps, in order:
+
+1. Bump `version` in `pyproject.toml`. A wheel whose version did not change
+   installs as a silent no-op that leaves the old code in place.
+2. Run the tests, `ruff` and the prose check. All three must pass.
+3. Commit and push. Wait for CI on `main` to pass.
+4. Tag the commit and push the tag:
+   `git tag -a vX.Y.Z -m "what changed"` then `git push origin vX.Y.Z`.
+   CI checks that the tag equals the version.
+5. Build the wheel: `python -m pip wheel . --no-deps -w dist`. The file is
+   `dist/soterix_qa_shared-X.Y.Z-py3-none-any.whl`.
+6. In each test repository: copy the wheel into `vendor/`, delete the old
+   wheel, change the `==` version in `requirements.txt`, run
+   `pip install -r requirements.txt`, run the offline suites, commit.
+
+Each test repository has a test that fails when the installed version, the
+`==` line and the wheel in `vendor/` disagree.
 
 ## Report a Test Run to QA Touch
 
@@ -94,9 +129,26 @@ Environment variables:
 | `QATOUCH_RUN_KEY` | Run key, instead of `--qatouch-run`. |
 | `QATOUCH_UPLOAD` | Arms the upload, instead of `--qatouch-upload`. |
 | `ENV` | The environment name recorded with each run. |
+| `QA_TRACES_PUBLISHED` | `0` when a run folder will be copied without its trace zips. The run page then says where the trace is instead of linking it. |
 | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira authentication. |
 | `JIRA_PROJECT_KEY` | Default Jira project. |
 | `BUG_CREATION_ENABLED` | Arms real bug creation. Any other value files nothing. |
+
+The package reads no tenant or machine variable. A run is described by
+its environment name, the server host, the machine, the operator and the
+account, all recorded in `summary.json`.
+
+## Optional Hooks
+
+A test repository can give the reporting pages facts the package cannot
+know. Each hook is a function the repository registers at start-up. With
+no hook, the page renders without that fact.
+
+| Hook | What the repository supplies |
+|---|---|
+| `reporting.run_page.configure_axis(provider)` | Names for the columns of the run map. The provider gets the run's parameters and returns `{'noun': 'camera', 'columns': {param: {'group', 'label', 'title'}}}`, or `None`. Without it the columns show the parameter text. |
+| `reporting.run_archive.configure_known_defects(provider)` | Which failures are app defects somebody already knows. The provider gets a node id and, on a failure, its first error line, and returns `{'since': date, 'what': one line}` or `None`. The run page then labels the row `Known defect` and counts it apart from the failures still to read. An empty list behind the provider labels nothing. |
+| `reporting.products.configure_path_rules(rules)` | Which product a test path belongs to. |
 
 ## Files It Reads and Writes
 
@@ -189,7 +241,8 @@ that ran a test. The ledger writes only on armed runs.
 ## Limits
 
 - The reporter needs pytest 8 or 9. A consumer pins its own version.
-- Python 3.11 or later. CI tests 3.11 through 3.14.
+- Python 3.11 or later is declared. CI runs 3.14, the version both test
+  repositories use.
 - Bug creation stays off until `BUG_CREATION_ENABLED` is set and the `jira`
   package is installed.
 - One case key can cover several tests. The worst status wins.
@@ -214,8 +267,8 @@ repositories.
 |---|---|
 | `docs/CONVENTIONS.md` | How code gets written here, and the trap behind each rule. |
 | `docs/RULES.md` | What must stay true. Read before changing packaging or shims. |
-| `docs/MERGE_RUNBOOK.md` | The two remotes, and the five steps of a release. |
+| `docs/MERGE_RUNBOOK.md` | The two remotes, and the six steps of a release. |
 | `docs/RUN_HISTORY.md` | What a run leaves behind, and why one path is tracked. |
-| `STATUS.md` | Where the work stands and what comes next. |
+| `STATUS.md` | What the package holds today, and how the two test repositories install it. |
 | `docs/STYLE.md` | The writing rules, in short. Full version: `docs/writing/ste.md`. |
 | `AGENTS.md` | Guidance for AI coding tools working in this repository. |

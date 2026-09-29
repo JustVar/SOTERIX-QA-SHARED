@@ -47,8 +47,6 @@ def state(monkeypatch, tmp_path):
     monkeypatch.setattr(ra, '_state', fresh)
     monkeypatch.setattr(ra, '_live_enabled', lambda config: True)
     monkeypatch.setattr(ra, '_archive_disabled', lambda environ: True)   # unconfigure stops after the clear
-    monkeypatch.delenv('QA_RUNS_LIVE_DIR', raising=False)
-    monkeypatch.setenv('BOX', 'us')
     return fresh
 
 
@@ -57,18 +55,19 @@ def read(path):
 
 
 def test_collection_finish_writes_the_first_record(state, tmp_path, monkeypatch):
-    """The record exists from collection: what was collected, the workers, the box, the product."""
-    served = tmp_path / 'served'
-    monkeypatch.setenv('QA_RUNS_LIVE_DIR', str(served))
+    """The record exists from collection: what was collected, the workers, the product. It
+    reads nothing from the environment beyond ENV: a BOX left in an old .env changes nothing."""
+    monkeypatch.setenv('BOX', 'stale')
     ra.pytest_collection_finish(fake_session(['t/a.py::test_a', 't/b.py::test_b', 't/c.py::test_c'],
                                              {'numprocesses': 4}))
     record = read(ra.RUNS_DIR / 'live.json')
     assert record['state'] == 'running'
-    assert (record['collected'], record['done'], record['workers'], record['box']) == (3, 0, 4, 'us')
+    assert (record['collected'], record['done'], record['workers']) == (3, 0, 4)
+    assert 'box' not in record
     assert record['target'] == ['tests/ui']
     assert record['product'] == 'NexaiQ-Core'
     assert record['eta_basis'].startswith('no earlier run')
-    assert read(served / 'live.json') == record        # the served copy is the same record
+    assert state.live_paths == [ra.RUNS_DIR / 'live.json']   # beside the index, nowhere else
 
 
 def test_progress_updates_the_record_and_names_the_current_test(state):
@@ -93,15 +92,12 @@ def test_refreshes_are_throttled(state):
     assert state.counts['passed'] == 1                    # the count moved; only the file waited
 
 
-def test_unconfigure_takes_the_record_down_before_any_early_return(state, tmp_path, monkeypatch):
+def test_unconfigure_takes_the_record_down_before_any_early_return(state):
     """The banner never outlives the run: the record goes even when the archive is skipped."""
-    served = tmp_path / 'served'
-    monkeypatch.setenv('QA_RUNS_LIVE_DIR', str(served))
     ra.pytest_collection_finish(fake_session(['t/a.py::test_a']))
-    assert (ra.RUNS_DIR / 'live.json').exists() and (served / 'live.json').exists()
+    assert (ra.RUNS_DIR / 'live.json').exists()
     ra.pytest_unconfigure(FakeConfig(['tests/ui']))
     assert not (ra.RUNS_DIR / 'live.json').exists()
-    assert not (served / 'live.json').exists()
 
 
 def test_disabled_live_record_writes_nothing(state, monkeypatch):
@@ -125,7 +121,7 @@ def test_both_pages_carry_the_banner_slot():
 def test_sessionstart_opens_the_record_before_collection(state, monkeypatch):
     """The record exists from the first second, saying 'collecting' until the ids are known.
     This is the path the xdist controller takes: it never collects, so collection_finish
-    never fires there (09/11/2026: every -n run, the nightly included, had no record at all)."""
+    never fires there (before this, every -n run had no record at all)."""
     monkeypatch.setattr(ra, '_archive_disabled', lambda environ: False)
     monkeypatch.setattr(ra, '_process_may_archive', lambda config, environ: True)
     monkeypatch.setattr(ra, 'configure', lambda root: None)

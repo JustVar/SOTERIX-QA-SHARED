@@ -4,17 +4,15 @@ The archive is written when a run ends, so a viewer during the run sees
 the previous one and nothing says a run is happening. The archive plugin
 writes `live.json` beside the index at session start and refreshes it as
 tests finish; the index and health pages fetch it and show a banner; the
-plugin removes it once the run is archived. On the lab runner the plugin
-also writes it into the served directory (`QA_RUNS_LIVE_DIR`), so nothing
-has to sync.
+plugin removes it once the run is archived.
 
 The estimate comes from the archive's own history: every summary.json
 carries per-test durations, so the remaining tests' median durations over
-the last runs of the same target and box, divided by the worker count, is
-the time left. Before that history exists it falls back to the median total
-duration of those runs less the time elapsed; with no history at all it
-says so. A heartbeat older than STALE_AFTER_S reads as stalled, which is
-the signal the hung nightlies of 09/02-09/08/2026 never gave.
+the last runs of the same target, divided by the worker count, is the time
+left. Before that history exists it falls back to the median total duration
+of those runs less the time elapsed; with no history at all it says so. A
+heartbeat older than STALE_AFTER_S reads as stalled: a scheduled run that
+hangs gives no other signal, and a week of hung runs once passed unseen.
 
 Pure functions take their inputs; the plugin does the I/O through
 write_live / clear_live.
@@ -30,20 +28,15 @@ from pathlib import Path
 from typing import Any
 
 LIVE_FILE = 'live.json'
-LIVE_DIR_ENV = 'QA_RUNS_LIVE_DIR'
-HISTORY_RUNS = 5          # runs of the same target and box the estimate reads
+HISTORY_RUNS = 5          # runs of the same target the estimate reads
 STALE_AFTER_S = 15 * 60   # no heartbeat for this long reads as stalled
 MIN_WRITE_GAP_S = 3.0     # the plugin refreshes the file at most this often
 
 
-def live_paths(runs_dir: Path, environ: Mapping[str, str] | None = None) -> list[Path]:
-    """Where the record is written: the archive dir, and the served dir when set."""
-    environ = os.environ if environ is None else environ
-    paths = [Path(runs_dir) / LIVE_FILE]
-    served = (environ.get(LIVE_DIR_ENV) or '').strip()
-    if served:
-        paths.append(Path(served) / LIVE_FILE)
-    return paths
+def live_paths(runs_dir: Path) -> list[Path]:
+    """Where the record is written: beside the archive index. A list, so a
+    consumer that mirrors the archive elsewhere can add a path."""
+    return [Path(runs_dir) / LIVE_FILE]
 
 
 def write_live(paths: Iterable[Path], record: Mapping[str, Any]) -> None:
@@ -70,18 +63,16 @@ def clear_live(paths: Iterable[Path]) -> None:
 
 # ---------------------------------------------------------------- history
 
-def _run_matches(summary: Mapping[str, Any], target: list[str], box: str | None) -> bool:
-    prov = summary.get('provenance') if isinstance(summary.get('provenance'), dict) else {}
-    same_target = list(summary.get('target') or []) == list(target)
-    same_box = (prov.get('box') or None) == (box or None)
-    return same_target and same_box
+def _run_matches(summary: Mapping[str, Any], target: list[str]) -> bool:
+    """Same target list, in order. An older summary may carry a `box` label
+    in its provenance; it is not part of the match."""
+    return list(summary.get('target') or []) == list(target)
 
 
-def history(runs_dir: Path, target: list[str], box: str | None,
-            last: int = HISTORY_RUNS) -> list[dict]:
-    """The newest `last` archived summaries of this target on this box,
-    newest first. Runs the cap or a kill ended have no summary and do not
-    count, which keeps a week of hung runs out of the estimate."""
+def history(runs_dir: Path, target: list[str], last: int = HISTORY_RUNS) -> list[dict]:
+    """The newest `last` archived summaries of this target, newest first.
+    Runs the cap or a kill ended have no summary and do not count, which
+    keeps a week of hung runs out of the estimate."""
     found = []
     runs_dir = Path(runs_dir)
     if not runs_dir.is_dir():
@@ -94,7 +85,7 @@ def history(runs_dir: Path, target: list[str], box: str | None,
             summary = json.loads(summary_path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             continue
-        if _run_matches(summary, target, box):
+        if _run_matches(summary, target):
             found.append(summary)
             if len(found) >= last:
                 break
@@ -127,23 +118,23 @@ def estimate_remaining_s(remaining: Iterable[str], durations: Mapping[str, float
         total = sum(known) + typical * (len(remaining) - len(known))
         runs = len(list(summaries)) if summaries else 0
         basis = (f'per-test durations from {runs} earlier run{"s" if runs != 1 else ""} '
-                 f'of this target on this box' if runs else 'per-test durations from earlier runs')
+                 f'of this target' if runs else 'per-test durations from earlier runs')
         return total / workers, basis
     totals = [s.get('duration_s') for s in summaries if isinstance(s.get('duration_s'), (int, float))]
     if totals:
         left = max(float(statistics.median(totals)) - elapsed_s, 0.0)
         return left, f'the median length of {len(totals)} earlier run{"s" if len(totals) != 1 else ""} of this target'
-    return None, 'no earlier run of this target on this box, so no estimate'
+    return None, 'no earlier run of this target, so no estimate'
 
 
 # ---------------------------------------------------------------- the record
 
-def build_record(*, started: float, now: float, target: list[str], box: str | None, env: str,
+def build_record(*, started: float, now: float, target: list[str], env: str,
                  product: str, workers: int, collected: int, counts: Mapping[str, int],
                  current: str | None, remaining: Iterable[str], runs_dir: Path,
                  hostname: str = '') -> dict[str, Any]:
     """Everything the banner shows, computed from the session's facts."""
-    summaries = history(runs_dir, target, box)
+    summaries = history(runs_dir, target)
     durations = median_durations(summaries)
     elapsed = max(now - started, 0.0)
     if int(collected) > 0:
@@ -154,7 +145,7 @@ def build_record(*, started: float, now: float, target: list[str], box: str | No
     return {
         'state': 'running',
         'started': _iso(started), 'updated': _iso(now),
-        'target': list(target), 'box': box or None, 'env': env, 'product': product,
+        'target': list(target), 'env': env, 'product': product,
         'host': hostname, 'workers': workers,
         'collected': int(collected), 'done': done,
         'counts': {k: int(counts.get(k, 0)) for k in ('passed', 'failed', 'skipped', 'errors')},
@@ -178,7 +169,7 @@ def banner_html() -> str:
     Inline on the index and health pages. Fetches live.json beside the page
     every 30 s with the cache off; a 404 hides the banner, a heartbeat older
     than stale_after_s says stalled instead of pretending. No library, no
-    build step: the pages stay static files nginx serves.
+    build step: the pages stay static files any web server can serve.
     """
     return '''<div id="live" class="live" hidden></div>
 <style>
@@ -197,7 +188,7 @@ def banner_html() -> str:
     var head=stale?'Run stalled: no progress since '+r.updated.replace('T',' '):'Run in progress';
     var eta=r.eta_s==null?'no estimate ('+r.eta_basis+')':'about '+mins(r.eta_s)+' left ('+r.eta_basis+')';
     el.className='live'+(stale?' stalled':'');
-    el.innerHTML='<b>'+head+'</b>: '+(r.target||[]).join(' ')+(r.box?' on box '+r.box:'')+(r.product?', '+r.product:'')+
+    el.innerHTML='<b>'+head+'</b>: '+(r.target||[]).join(' ')+(r.product?', '+r.product:'')+
       ', started '+r.started.replace('T',' ')+(r.host?' on '+r.host:'')+', '+r.workers+' worker'+(r.workers==1?'':'s')+'.<br>'+
       (r.collected?r.done+' of '+r.collected+' done ('+(c.passed||0)+' passed, '+(c.failed||0)+' failed, '+(c.skipped||0)+' skipped'+((c.errors||0)?', '+c.errors+' errors':'')+')':'collecting the tests')+', '+
       'elapsed '+mins(r.elapsed_s)+', '+eta+'.'+(r.current?'<br>Now: <code>'+r.current+'</code>':'')+

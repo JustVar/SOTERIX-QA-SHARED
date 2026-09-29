@@ -3,10 +3,9 @@
 If you use an AI tool to write, test, or update anything in this repo, point
 it here first.
 
-This is a library, not a test suite. Two repos will install it and run their
-whole test suite through it, so a quiet defect here becomes a quiet defect
-everywhere. Neither has migrated yet - see `STATUS.md` - which is exactly
-why the guards go in before the consumers do. Read before making changes:
+This is a library, not a test suite. Two repos install it as a built wheel
+and run their whole test suite through it, so a quiet defect here becomes a
+quiet defect everywhere at the next release. Read before making changes:
 
 1. **`docs/RULES.md`** - nine rules and the compatibility contract. Every one
    of them was reproduced, and every one of them prevents a *silent* failure:
@@ -18,7 +17,7 @@ why the guards go in before the consumers do. Read before making changes:
    error messages and log lines, flavored mode for docs. `docs/STYLE.md` is
    the short human summary. Never apply the rules to code, identifiers, or
    any name a reader must match against a screen.
-3. **`STATUS.md`** - where the migration stands and what comes next.
+3. **`STATUS.md`** - what the package holds and how the two repos install it.
 4. **`docs/RUN_HISTORY.md`** - what a test run leaves behind, and why exactly
    one written path is tracked in git.
 
@@ -47,7 +46,7 @@ and the reporter says so - it never falls back to permissive.
 ## Before You Commit
 
 ```bash
-python -m pytest tests/ -q          # 154 tests, all offline
+python -m pytest tests/ -q          # all offline: no network, no browser
 python -m ruff check .
 python tools/prose_check.py         # the mechanical rules from docs/STYLE.md
 ```
