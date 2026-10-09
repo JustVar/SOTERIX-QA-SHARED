@@ -1,5 +1,38 @@
 # Soterix QA Shared
 
+## About this repo
+
+The test pipeline that two test repos share: Soterix-WebApp-QA (browser tests)
+and Soterix-API-QA (API tests). Built by Justin Varughese (QA Lead) for
+Soterix Systems, an AI video-surveillance SaaS startup, from August to
+September 2026. Soterix has since closed. This package needs no server, so its
+tests still run, and CI, which ran on the company's copies of these repos, is
+switched off here.
+
+- An upload to QA Touch that reads every result back, because the QA Touch
+  API answers success for results it discards.
+- A run report page that names the shared cause of a group of failures and
+  marks known defects apart from new ones.
+- 652 test functions (850 collected). 31 tagged releases between 31 Aug and
+  29 Sep 2026, each one installed into both test repos as a wheel.
+- Where to start:
+  - The read-back upload
+    ([src/soterix_qa_shared/qatouch/upload.py](src/soterix_qa_shared/qatouch/upload.py)).
+  - The result sinks ([src/soterix_qa_shared/qatouch/results.py](src/soterix_qa_shared/qatouch/results.py)),
+    the extension point that sends one run to several destinations.
+  - The run page ([src/soterix_qa_shared/reporting/run_page.py](src/soterix_qa_shared/reporting/run_page.py)).
+- Built with AI coding agents (Claude Code, OpenAI Codex, Microsoft 365
+  Copilot) under the rules in [AGENTS.md](AGENTS.md).
+- To see it run: `pip install -e ".[dev]"`, then `python -m pytest`. See
+  "Development" below.
+- The case study that covers all three repos:
+  [qa-automation-case-study](https://github.com/JustVar/qa-automation-case-study).
+- The two test repos:
+  [Soterix-WebApp-QA](https://github.com/JustVar/Soterix-WebApp-QA) and
+  [Soterix-API-QA](https://github.com/JustVar/Soterix-API-QA).
+
+## What this package does
+
 This package holds the code that the Soterix test repositories share. It
 does 3 jobs:
 
