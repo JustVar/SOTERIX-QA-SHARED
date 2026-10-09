@@ -6,7 +6,7 @@ This file is only the process around them.
 
 ## The Remote
 
-One remote, `origin`, on the Soterix-Systems organisation. Work on a
+One remote, `origin`: github.com/JustVar/SOTERIX-QA-SHARED. Work on a
 branch, open a pull request, and let CI gate the merge. Never force-push
 `main`: its tags mark the wheels the consumers carry, and a rewritten tag
 is a wheel nobody can rebuild.
@@ -50,17 +50,15 @@ Six steps, in this order:
    version did not change installs as a silent exit-0 no-op that leaves the
    old code in place, and CI refuses a tag that does not equal the version.
 2. **Tests, `ruff` and the prose check green.** Then commit and push.
-   `main -> main` twice.
 3. **Wait for CI to pass on `main`.** CI runs on Linux and has caught bugs
    the Windows-only development machine could not: a path literal that was
    absolute on Windows and relative on Linux, and a shebang without an
    execute bit.
-4. **Tag and push the tag to both remotes.**
+4. **Tag and push the tag.**
 
    ```powershell
    git tag -a v0.38.0 -m "v0.38.0 - what changed"
    git push origin v0.38.0
-   git push company v0.38.0
    ```
 
    The tag re-runs CI with the `tag-matches-version` job, which is skipped

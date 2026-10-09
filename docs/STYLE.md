@@ -8,8 +8,8 @@ a screen (button labels, field names, status values, error codes).
 The rules condense two sources: ASD-STE100 Simplified Technical English and
 Orwell's six rules from "Politics and the English Language" (1946).
 
-The complete rule files live in `docs/writing/` (`ste.md`, with `orwell.md` as
-the short version). AI coding tools pick them up through `AGENTS.md` at the
+The complete rules live in `docs/writing/ste.md`. This page is the short
+version. AI coding tools pick them up through `AGENTS.md` at the
 repo root. If you use one to write, test, or update files here, keep it
 pointed at those rules.
 
