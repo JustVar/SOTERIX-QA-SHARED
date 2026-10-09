@@ -99,9 +99,7 @@ from typing import Any
 from urllib.parse import quote
 
 from soterix_qa_shared.qatouch.mapping import canonical_nodeid
-from soterix_qa_shared.reporting.branding import favicon_link, header_logo
 from soterix_qa_shared.reporting.products import (
-    is_mixed,
     product_for,
     product_name,
     run_product,
@@ -1297,9 +1295,6 @@ def filter_script(noun: str = 'tests') -> str:
 '''
 
 
-_FILTER_JS = filter_script()
-
-
 def _href(rel: str) -> str:
     return quote(rel, safe='/')
 
@@ -1604,50 +1599,6 @@ def _render_group(group: list[TestRecord], run_dir: Path, with_product: bool = F
     return f'<details class="group"{"" if folded else " open"}>{head}\n{cards}\n</details>'
 
 
-def _render_row(rec: TestRecord, links: RunLinks | None = None,
-                with_product: bool = False) -> str:
-    extras = ''
-    if rec.advisories:
-        extras += '<ul class="plain">' + ''.join(
-            f'<li>{escape(a)}</li>' for a in rec.advisories) + '</ul>'
-    return (f'<div class="row" data-test="{_filter_key(rec)}"><div class="row-main">'
-            f'{_render_identity(rec, "div", compact=True)}'
-            f'{_render_facts(rec, links=links, with_product=with_product, with_module=False)}'
-            f'{extras}</div>{_render_shots(rec, compact=True)}</div>')
-
-
-def _render_collapsed(title: str, records: list[TestRecord], links: RunLinks | None = None,
-                      with_product: bool = False) -> str:
-    """A collapsed list, its tests grouped under their module."""
-    if records:
-        groups: dict[str, list[TestRecord]] = {}
-        for rec in records:
-            groups.setdefault(rec.module_name, []).append(rec)
-        # each module in its own wrapper, so its sticky heading stays
-        # only while its rows scroll and the next heading takes over
-        body = ''.join(
-            f'<div class="module-group"><h4 class="module">{escape(module)} ({len(group)})</h4>'
-            + ''.join(_render_row(r, links, with_product) for r in group) + '</div>'
-            for module, group in sorted(groups.items()))
-    else:
-        body = '<p class="empty">None.</p>'
-    return (f'<details class="section"><summary>{escape(title)} ({len(records)})</summary>'
-            f'{body}</details>')
-
-
-def _render_slowest(records: list[TestRecord], count: int = SLOWEST_COUNT) -> str:
-    timed = sorted((r for r in records if r.seconds is not None),
-                   key=lambda r: r.seconds or 0.0, reverse=True)[:count]
-    if not timed:
-        return '<p class="empty">No per-test timing in this run.</p>'
-    rows = ''.join(
-        f'<tr><td class="num">{escape(format_seconds(r.seconds or 0.0))}</td>'
-        f'<td>{escape(r.display_title)}<div class="nodeid">{escape(r.nodeid)}</div></td>'
-        f'<td>{escape(outcome_label(r.outcome))}</td></tr>' for r in timed)
-    return ('<table class="facts-table"><tr><th>Duration</th><th>Test</th><th>Outcome</th></tr>'
-            + rows + '</table>')
-
-
 def summary_product(summary: Mapping) -> str:
     """The run's product from summary.json: provenance's label, else (an
     archive before schema 4) the label its per-test records' node ids
@@ -1741,142 +1692,10 @@ def render_run_report(run_dir: Path, summary: dict, tests: dict[str, TestRecord]
 
     The page is run_page.render_run_page since 09/21/2026: the verdict, the causes and
     the map, then 1 test in a side pane. `verdict` is not used by it: the page counts
-    the records it shows. render_run_report_classic is the page before it."""
+    the records it shows. The page before it, render_run_report_classic, had no
+    caller after that date and left on 10/09/2026 (tag v0.38.0 holds it)."""
     from soterix_qa_shared.reporting.run_page import render_run_page
     return render_run_page(run_dir, summary, tests, unattached, previous=previous, product=product)
-
-
-def render_run_report_classic(run_dir: Path, summary: dict, tests: dict[str, TestRecord],
-                              unattached: list[str], previous: Mapping | None = None,
-                              verdict: str = '', product: str = '') -> str:
-    """The run page as it was until 09/21/2026: each failure as a card, in one long column.
-    Kept for its pins, which hold the rendering helpers that the health page shares."""
-    counts = summary.get('counts') if isinstance(summary.get('counts'), dict) else {}
-    target = ' '.join(str(t) for t in (summary.get('target') or [])) or run_dir.name.partition('__')[2]
-    started = summary.get('started') or run_dir.name.partition('__')[0].replace('_', ' ')
-    duration = summary.get('duration_s')
-    exitstatus = summary.get('exitstatus')
-    runs_dir = run_dir.parent
-    run_links = RunLinks(runs_dir, run_dir.name)
-    # A mixed run's header names no single product, so every test names its own.
-    with_product = is_mixed(product)
-    when = friendly_stamp(started)
-    title = f'{product} - Test Run - {when}' if product else f'Test Run - {when}'
-
-    def by_outcome(names: tuple[str, ...]) -> list[TestRecord]:
-        return sorted((t for t in tests.values() if t.outcome in names),
-                      key=lambda t: (t.module_name, t.nodeid))
-
-    failures = by_outcome(FAILURE_OUTCOMES)
-    passed = by_outcome(PASSED_OUTCOMES)
-    skipped = by_outcome(SKIPPED_OUTCOMES)
-    unknown = by_outcome(('unknown',))
-
-    chips = ''.join(
-        f'<span class="chip {key}">{escape(key.capitalize())}: {escape(str(counts.get(key, "-")))}</span>'
-        for key in ('passed', 'failed', 'skipped', 'errors'))
-    links = ['<a href="../index.html">Archive Index</a>']
-    if (run_dir / 'report.html').is_file():
-        links.insert(0, '<a href="report.html">Raw pytest-html</a>')
-    if (runs_dir / 'health.html').is_file():
-        links.append('<a href="../health.html">Health</a>')
-    if (run_dir / 'advisories.txt').is_file():
-        links.append('<a href="advisories.txt">advisories.txt</a>')
-    has_run_log = (run_dir / 'log' / 'run.log').is_file()
-    if has_run_log:
-        links.append('<a href="log/run.log">run.log</a>')
-    if previous:
-        links.append(f'<a href="{run_href(previous["name"], runs_dir, "../")}">'
-                     'Previous run of these tests</a>')
-    links.append('<a href="./">Folder</a>')
-
-    if previous:
-        def link(label: str) -> str:
-            return f'<a href="{run_href(previous["name"], runs_dir, "../")}">{escape(label)}</a>'
-        compared = (f'<p class="case">{delta_wording(previous, link)}. Each changed test carries '
-                    f'a label: {DELTA_NEW_FAILURE}, {DELTA_FIXED}, {DELTA_STILL_FAILING}, '
-                    f'or {DELTA_NEW_TEST}.</p>')
-    else:
-        compared = f'<p class="case">{escape(delta_wording(None))}</p>'
-    verdict_html = f'<p class="verdict">{escape(verdict)}</p>' if verdict else ''
-    verdict_html += _read_first_html(summary)
-
-    advisories = [a for a in (summary.get('advisories') or []) if isinstance(a, dict)]
-    if advisories:
-        adv_body = '<ul class="plain">' + ''.join(
-            f"<li><code>{escape(str(a.get('test', '')))}</code>: {escape(str(a.get('line', '')))}</li>"
-            for a in advisories) + '</ul>'
-    else:
-        adv_body = '<p class="empty">None.</p>'
-
-    fold = len(failures) > OPEN_FAILURES_MAX
-    fold_tools = ('<div class="fold-tools">'
-                  '<button type="button" onclick="document.querySelectorAll(\'#failure-list details.card, '
-                  '#failure-list details.group\').forEach(d => d.open = true)">Expand all</button>'
-                  '<button type="button" onclick="document.querySelectorAll(\'#failure-list details.card, '
-                  '#failure-list details.group\').forEach(d => d.open = false)">Collapse all</button>'
-                  '<span class="case">Click a failure to open it.</span></div>' if fold else '')
-    failure_body = (fold_tools + '<div id="failure-list">'
-                    + '\n'.join(_render_group(g, run_dir, with_product, run_links, folded=fold)
-                                for g in group_failures(failures)) + '</div>'
-                    if failures else '<p class="empty">No failures in this run.</p>')
-    passed_note = ('<p class="case">The captured output of passed and skipped tests is in '
-                   '<a href="log/run.log">log/run.log</a>, one section per test.</p>'
-                   if has_run_log else '')
-
-    extra_sections = ''
-    if unknown:
-        extra_sections += _render_collapsed('Outcome unknown', unknown, run_links, with_product)
-    if unattached:
-        extra_sections += ('<details class="section"><summary>Files not matched to a test '
-                           f'({len(unattached)})</summary><ul class="plain">'
-                           + ''.join(f'<li><a href="{_href(u)}">{escape(u)}</a></li>'
-                                     for u in unattached) + '</ul></details>')
-
-    return f'''<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(title)}</title>
-{favicon_link()}
-<style>
-.brand-row {{ display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }}
-.brand-row h1 {{ margin: 0; }}
-.brand {{ display: block; }}{PAGE_CSS}</style>
-</head>
-<body>
-<div class="brand-row">{header_logo()}<h1>Test Run - {escape(friendly_stamp(started))}</h1></div>
-{verdict_html}
-<div class="ledger"><dl class="run-facts">
-{_fact('Outcome', outcome_html(exitstatus), lead=True, tone=_outcome_tone(exitstatus))}{_fact('Target', escape(target))}{_fact('Duration', escape(duration_text(duration)))}{_render_provenance(summary, product)}{_fact('Folder', escape(run_dir.name))}
-</dl></div>
-<div class="chips">{chips}</div>
-<div class="meta">{' | '.join(links)}</div>
-{compared}
-<p><input id="filter" type="search" placeholder="Filter tests: title, node id, case key, module, outcome"
- aria-label="Filter tests"><span id="filter-count"></span></p>
-
-<h2 id="failures">Failures ({len(failures)})</h2>
-{failure_body}
-
-<h2 id="advisories" title="{escape(NOTES_TITLE, quote=True)}">Notes ({len(advisories)})</h2>
-{adv_body}
-
-<h2 id="slowest">Slowest {SLOWEST_COUNT}</h2>
-{_render_slowest(list(tests.values()))}
-
-<h2 id="passed">Passed</h2>
-{passed_note}
-{_render_collapsed('Passed', passed, run_links, with_product)}
-
-<h2 id="skipped">Skipped</h2>
-{_render_collapsed('Skipped', skipped, run_links, with_product)}
-{extra_sections}
-<script>{_FILTER_JS}</script>
-</body>
-</html>
-'''
 
 
 def build_run_report(run_dir: Path) -> str:
