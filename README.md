@@ -3,7 +3,7 @@
 ## About this repo
 
 The test pipeline that two test repos share: Soterix-WebApp-QA (browser tests)
-and Soterix-API-QA (API tests). Built by Justin Varughese (QA Lead) for
+and Soterix-API-QA (API tests). Built by Justin Varughese (System Platform QA/QC Manager) for
 Soterix Systems, an AI video-surveillance SaaS startup, from August to
 September 2026. Soterix has since closed. This package needs no server, so its
 tests still run, and CI, which ran on the company's copies of these repos, is
