@@ -3,18 +3,15 @@
 ## About this repo
 
 The test pipeline that two test repos share: Soterix-WebApp-QA (browser tests)
-and Soterix-API-QA (API tests). Built by Justin Varughese (System Platform QA/QC Manager) for
-Soterix Systems, an AI video-surveillance SaaS startup, from August to
-September 2026. Soterix has since closed. This package needs no server, so its
-tests still run, and CI, which ran on the company's copies of these repos, is
-switched off here.
+and Soterix-API-QA (API tests). Built by Justin Varughese, System Platform
+QA/QC Manager, for Soterix Systems, an AI video-surveillance SaaS company.
 
 - An upload to QA Touch that reads every result back, because the QA Touch
   API answers success for results it discards.
 - A run report page that names the shared cause of a group of failures and
   marks known defects apart from new ones.
-- 652 test functions (850 collected). 31 tagged releases between 31 Aug and
-  29 Sep 2026, each one installed into both test repos as a wheel.
+- 652 tests of its own. 31 tagged releases, each one installed into both test
+  repos as a package.
 - Where to start:
   - The read-back upload
     ([src/soterix_qa_shared/qatouch/upload.py](src/soterix_qa_shared/qatouch/upload.py)).
@@ -30,6 +27,9 @@ switched off here.
 - The two test repos:
   [Soterix-WebApp-QA](https://github.com/JustVar/Soterix-WebApp-QA) and
   [Soterix-API-QA](https://github.com/JustVar/Soterix-API-QA).
+- Running it today: Soterix has since closed. This package needs no server,
+  so its tests still run on any machine. CI ran on the company's copies of
+  these repos and is switched off here.
 
 ## What this package does
 
