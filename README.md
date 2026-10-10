@@ -6,7 +6,9 @@ The test pipeline that two test repos share: Soterix-WebApp-QA (browser tests)
 and Soterix-API-QA (API tests). Built by Justin Varughese, System Platform
 QA/QC Manager, for Soterix Systems, an AI video-surveillance SaaS company.
 
-- An upload to QA Touch that reads every result back, because the QA Touch
+- An upload to QA Touch (a test management tool that holds the team's test
+  cases and the result of each test run) that reads every result back,
+  because the QA Touch
   API answers success for results it discards.
 - A run report page that names the shared cause of a group of failures and
   marks known defects apart from new ones.
