@@ -12,7 +12,7 @@ QA/QC Manager, for Soterix Systems, an AI video-surveillance SaaS company.
   API answers success for results it discards.
 - A run report page that names the shared cause of a group of failures and
   marks known defects apart from new ones.
-- 652 tests of its own. 31 tagged releases, each one installed into both test
+- 850 tests of its own. 31 tagged releases, each one installed into both test
   repos as a package.
 - Where to start:
   - The read-back upload
@@ -73,6 +73,7 @@ install it editable into that repository's venv. An editable install
 overrides the vendored wheel until the next `pip install -r requirements.txt`.
 
 ```bash
+git clone https://github.com/JustVar/SOTERIX-QA-SHARED.git ../soterix-qa-shared
 pip install -e ../soterix-qa-shared              # client only
 pip install -e "../soterix-qa-shared[reporter]"  # adds pytest, for a test repo
 pip install -e "../soterix-qa-shared[jira]"      # adds the jira package
@@ -207,7 +208,7 @@ python -m soterix_qa_shared.qatouch.retry             # send it
 python -m soterix_qa_shared.qatouch.retry --clear     # discard the log
 ```
 
-A test repository reaches the same CLI as `python tools/retry_uploads.py`.
+Soterix-WebApp-QA reaches the same CLI as `python tools/retry_uploads.py`.
 
 Fail a run that collects fewer tests than the last recorded count. Run this
 from a test repository, where `tools/collect_floor.py` supplies that
@@ -252,8 +253,11 @@ on zero collected, but reports nothing when a suite only shrinks.
 ## Add a Destination
 
 `ResultSink` is the extension point. Three sinks ship today: the local run
-record, the tracked ledger, and the QA Touch upload. A JUnit writer or a
-dashboard feed plugs in without touching the reporter.
+record, the tracked ledger, and the QA Touch upload. A new destination, such
+as a JUnit writer or a dashboard feed, is a subclass of `ResultSink` and one
+line in `_build_sinks` in `qatouch/reporter.py`, the function that picks the
+sinks for a session. The reporter's hooks and the other sinks stay as they
+are.
 
 ```python
 from soterix_qa_shared.qatouch.results import ResultSink
@@ -270,13 +274,19 @@ class JUnitSink(ResultSink):
         return ['  JUnit: written']
 ```
 
+Then register it in `_build_sinks`:
+
+```python
+sinks.append(JUnitSink())
+```
+
 Each sink decides when it applies. The run record writes on every session
 that ran a test. The ledger writes only on armed runs.
 
 ## Limits
 
 - The reporter needs pytest 8 or 9. A consumer pins its own version.
-- Python 3.11 or later is declared. CI runs 3.14, the version both test
+- Python 3.11 or later is declared. CI ran 3.14, the version both test
   repositories use.
 - Bug creation stays off until `BUG_CREATION_ENABLED` is set and the `jira`
   package is installed.
