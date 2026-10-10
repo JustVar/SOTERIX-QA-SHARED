@@ -245,11 +245,11 @@ def test_find_axis_takes_the_names_that_the_run_recorded_first():
     """summary['axis'] wins over the consumer's provider: the run knew its cameras when it ran."""
     rp.configure_axis(lambda params: {'noun': 'device', 'columns': {}})
     summary = {'axis': {'noun': 'camera', 'columns': {
-        CAMERAS[0]: {'group': 'DC-5V-1', 'label': '.129', 'title': 'DC-5V-1 at 10.2.0.129'}}}}
+        CAMERAS[0]: {'group': 'DC-5V-1', 'label': '.129', 'title': 'DC-5V-1 at 192.0.2.129'}}}}
     axis = rp.find_axis(_grid(), summary)
     assert axis['noun'] == 'camera'
     named = next(c for c in axis['columns'] if c['param'] == CAMERAS[0])
-    assert (named['group'], named['label'], named['title']) == ('DC-5V-1', '.129', 'DC-5V-1 at 10.2.0.129')
+    assert (named['group'], named['label'], named['title']) == ('DC-5V-1', '.129', 'DC-5V-1 at 192.0.2.129')
     # A camera that the run did not name keeps the names from its parameter text.
     other = next(c for c in axis['columns'] if c['param'] == CAMERAS[1])
     assert (other['group'], other['label']) == ('DC-5V-1', '5b42')
@@ -312,13 +312,13 @@ def test_find_axis_copies_only_the_names_of_a_column(source):
     """The data of a column gives its group, label and title. A 'param' key in it cannot move the
     column to a different parameter, and no other key comes on the column."""
     named = {'noun': 'camera', 'columns': {CAMERAS[0]: {
-        'param': CAMERAS[1], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 10.2.0.129', 'rows': 'x', 'ip': '10.2.0.129'}}}
+        'param': CAMERAS[1], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 192.0.2.129', 'rows': 'x', 'ip': '192.0.2.129'}}}
     if source == 'provider':
         rp.configure_axis(lambda params: named)
     axis = rp.find_axis(_grid(), {'axis': named} if source == 'summary' else {})
     assert sorted(c['param'] for c in axis['columns']) == sorted(CAMERAS)
     column = next(c for c in axis['columns'] if c['label'] == '.129')
-    assert column == {'param': CAMERAS[0], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 10.2.0.129'}
+    assert column == {'param': CAMERAS[0], 'group': 'Lab', 'label': '.129', 'title': 'Lab at 192.0.2.129'}
     # The cell of each row under that column is still the record of the first camera.
     position = axis['columns'].index(column)
     assert axis['rows'][0][2][axis['columns'][position]['param']].nodeid.endswith(f'[{CAMERAS[0]}-chromium]')
@@ -371,7 +371,7 @@ def test_find_axis_is_none_past_the_widest_map():
 
 def test_shared_line_puts_dots_where_the_errors_differ():
     """The words that the errors share stay; a word that differs reads '...', and 2 in a row read as 1."""
-    assert rp.shared_line(['Camera 10.2.0.129 reports', 'Camera 10.2.0.171 reports']) == 'Camera ... reports'
+    assert rp.shared_line(['Camera 192.0.2.129 reports', 'Camera 192.0.2.171 reports']) == 'Camera ... reports'
     assert rp.shared_line(['Camera A on port 1 fails', 'Camera B on port 2 fails']) == 'Camera ... on port ... fails'
     assert rp.shared_line(['Camera 1 2 fails', 'Camera 3 4 fails']) == 'Camera ... fails'
     assert rp.shared_line(['same words', 'same words']) == 'same words'
@@ -423,7 +423,7 @@ def test_a_run_with_skips_counts_them_in_the_verdict(tmp_path):
 def test_failures_that_share_an_error_are_one_cause_with_their_count(tmp_path):
     """2 failures with 1 signature are 1 <details class="cause">: the count, the words they share, and 1 item for each."""
     records = _grid(('test_a', 'test_b'), CAMERAS[:2])
-    for rec, address in zip(records[:2], ('10.2.0.129', '10.2.0.171')):
+    for rec, address in zip(records[:2], ('192.0.2.129', '192.0.2.171')):
         rec.outcome, rec.signature, rec.headline = 'failed', 'Camera # reports no stream', f'Camera {address} reports no stream'
     page = _render(tmp_path, records)
     assert '<body data-first="fail"' in page
@@ -1108,7 +1108,7 @@ def _browser_run(tmp_path: Path) -> tuple[Path, list[rr.TestRecord]]:
     records = _grid()
     for rec in records:
         rec.title = titles[rec.nodeid.split('::')[1].split('[')[0]]
-    for rec, address in zip(records[:2], ('10.2.0.129', '10.2.0.171')):
+    for rec, address in zip(records[:2], ('192.0.2.129', '192.0.2.171')):
         rec.outcome, rec.signature, rec.headline = 'failed', 'Camera # reports no stream', f'Camera {address} reports no stream'
     records[4].outcome, records[4].reason = 'skipped', 'The camera has no SD card'
     records[0].history = rr.history_facts([

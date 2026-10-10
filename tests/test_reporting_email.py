@@ -88,7 +88,7 @@ def test_send_report_posts_the_report_and_reports_success(tmp_path, monkeypatch,
 
     report = tmp_path / 'report.html'
     report.write_text('<title>Nightly UI</title><body>ok</body>', encoding='utf-8')
-    assert em.send_report(report, 'qa@soterix.com') is True
+    assert em.send_report(report, 'qa@example.com') is True
     assert 'sendMail' in posted['url']
     assert 'Nightly UI' in posted['data']              # the title rode through
     assert 'SUCCESS' in capsys.readouterr().out
@@ -96,7 +96,7 @@ def test_send_report_posts_the_report_and_reports_success(tmp_path, monkeypatch,
 
 def test_the_recipient_falls_back_to_the_environment(tmp_path, monkeypatch):
     _fake_msal(monkeypatch)
-    monkeypatch.setenv('REPORT_RECIPIENT', 'list@soterix.com')
+    monkeypatch.setenv('REPORT_RECIPIENT', 'list@example.com')
     seen = {}
     monkeypatch.setattr(em.requests, 'post',
                         lambda url, headers, data, timeout:
@@ -104,7 +104,7 @@ def test_the_recipient_falls_back_to_the_environment(tmp_path, monkeypatch):
     report = tmp_path / 'r.html'
     report.write_text('<title>t</title>', encoding='utf-8')
     assert em.send_report(report) is True
-    assert 'list@soterix.com' in seen['data']
+    assert 'list@example.com' in seen['data']
 
 
 def test_a_graph_error_is_caught_and_reported_false(tmp_path, monkeypatch, capsys):
