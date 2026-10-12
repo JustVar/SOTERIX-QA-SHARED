@@ -26,6 +26,8 @@ QA/QC Manager, for Soterix Systems, an AI video-surveillance SaaS company.
   "Development" below.
 - The case study that covers all three repos:
   [qa-automation-case-study](https://github.com/JustVar/qa-automation-case-study).
+  Its [Terms](https://github.com/JustVar/qa-automation-case-study#terms)
+  section explains the words these READMEs use.
 - The two test repos:
   [Soterix-WebApp-QA](https://github.com/JustVar/Soterix-WebApp-QA) and
   [Soterix-API-QA](https://github.com/JustVar/Soterix-API-QA).
@@ -43,6 +45,25 @@ does 3 jobs:
 - It sends results to QA Touch and makes sure that they arrived.
 - It holds the gates that stop a bad change, such as a suite that collects
   fewer tests than before.
+
+In more detail:
+
+**Records every run.** The pytest plugin collects one result per test node
+id, then hands the finished run to each destination in turn.
+
+**Uploads to QA Touch, and checks the results landed.** The API answers
+success for uploads it discards, so the plugin reads the run back and
+compares each status. A run that resolved no case codes fails loudly.
+
+**Reports what the run left unset.** The read-back also names cases in the
+run that no selected test covered. A green upload over a half-filled run is
+otherwise invisible.
+
+**Replays failed uploads.** Failures go to a log with enough detail to send
+them again later.
+
+**Files a Jira bug, when told to.** Bug creation needs an environment flag
+and the `jira` package. Without both, it describes the issue it would file.
 
 How it works: the package is a set of pytest plugins and command line
 tools. A test repository keeps a built wheel of the package in its
@@ -83,33 +104,12 @@ pip install -e "../soterix-qa-shared[dev]"       # pytest, ruff, pytest-html
 The base install stays client-only on purpose. A script that reads QA Touch
 does not need a test runner.
 
-### Release a New Version
-
-A change here reaches a test repository only as a new wheel in its
-`vendor/` folder. The steps, in order:
-
-1. Bump `version` in `pyproject.toml`. A wheel whose version did not change
-   installs as a silent no-op that leaves the old code in place.
-2. Run the tests, `ruff` and the prose check. All three must pass.
-3. Commit and push. Wait for CI on `main` to pass.
-4. Tag the commit and push the tag:
-   `git tag -a vX.Y.Z -m "what changed"` then `git push origin vX.Y.Z`.
-   CI checks that the tag equals the version.
-5. Build the wheel: `python -m pip wheel . --no-deps -w dist`. The file is
-   `dist/soterix_qa_shared-X.Y.Z-py3-none-any.whl`.
-6. In each test repository: copy the wheel into `vendor/`, delete the old
-   wheel, change the `==` version in `requirements.txt`, run
-   `pip install -r requirements.txt`, run the offline suites, commit.
-
-Each test repository has a test that fails when the installed version, the
-`==` line and the wheel in `vendor/` disagree.
-
-## Report a Test Run to QA Touch
+## Report a test run to QA Touch
 
 Run the suite with the upload armed and a run key:
 
 ```bash
-pytest --qatouch-upload --qatouch-run d6pw
+pytest --qatouch-upload --qatouch-run PgGMv
 ```
 
 The run key is the short code in the QA Touch run's URL. Nothing uploads
@@ -124,25 +124,6 @@ The summary prints what happened:
   Run coverage: 5 case(s) in PgGMv; this run set 5
   Passed:     5
 ```
-
-## What It Does
-
-**Records every run.** The pytest plugin collects one result per test node
-id, then hands the finished run to each destination in turn.
-
-**Uploads to QA Touch, and checks the results landed.** The API answers
-success for uploads it discards, so the plugin reads the run back and
-compares each status. A run that resolved no case codes fails loudly.
-
-**Reports what the run left unset.** The read-back also names cases in the
-run that no selected test covered. A green upload over a half-filled run is
-otherwise invisible.
-
-**Replays failed uploads.** Failures go to a log with enough detail to send
-them again later.
-
-**Files a Jira bug, when told to.** Bug creation needs an environment flag
-and the `jira` package. Without both, it describes the issue it would file.
 
 ## Options
 
@@ -174,7 +155,7 @@ The package reads no tenant or machine variable. A run is described by
 its environment name, the server host, the machine, the operator and the
 account, all recorded in `summary.json`.
 
-## Optional Hooks
+## Optional hooks
 
 A test repository can give the reporting pages facts the package cannot
 know. Each hook is a function the repository registers at start-up. With
@@ -186,7 +167,7 @@ no hook, the page renders without that fact.
 | `reporting.run_archive.configure_known_defects(provider)` | Which failures are app defects somebody already knows. The provider gets a node id and, on a failure, its first error line, and returns `{'since': date, 'what': one line}` or `None`. The run page then labels the row `Known defect` and counts it apart from the failures still to read. An empty list behind the provider labels nothing. |
 | `reporting.products.configure_path_rules(rules)` | Which product a test path belongs to. |
 
-## Files It Reads and Writes
+## Files it reads and writes
 
 Paths are relative to the consumer repository's root.
 
@@ -198,7 +179,7 @@ Paths are relative to the consumer repository's root.
 | `logs/upload_failures.json` | no | Uploads to replay. |
 | `logs/upload_failures_unreplayable.json` | no | Failures no replay can fix. |
 
-## Command Line Tools
+## Command line tools
 
 Replay uploads that failed:
 
@@ -222,7 +203,7 @@ python tools/collect_floor.py --update   # record the current counts
 The gate itself is `soterix_qa_shared.gates.collect_floor`. pytest exits 5
 on zero collected, but reports nothing when a suite only shrinks.
 
-## What Is in the Package
+## What is in the package
 
 | Module | What It Holds |
 |---|---|
@@ -250,7 +231,7 @@ on zero collected, but reports nothing when a suite only shrinks.
 | `reporting.branding` | The company logo, embedded into a report page. |
 | `gates.collect_floor` | Fails a run when a suite collects fewer tests. |
 
-## Add a Destination
+## Add a destination
 
 `ResultSink` is the extension point. Three sinks ship today: the local run
 record, the tracked ledger, and the QA Touch upload. A new destination, such
@@ -306,7 +287,28 @@ Test a change against a real consumer before you tag it. The unit tests here
 cannot see the shim seam. A change has passed them while breaking both
 repositories.
 
-## Where to Read Next
+## Release a new version
+
+A change here reaches a test repository only as a new wheel in its
+`vendor/` folder. The steps, in order:
+
+1. Bump `version` in `pyproject.toml`. A wheel whose version did not change
+   installs as a silent no-op that leaves the old code in place.
+2. Run the tests, `ruff` and the prose check. All three must pass.
+3. Commit and push. Wait for CI on `main` to pass.
+4. Tag the commit and push the tag:
+   `git tag -a vX.Y.Z -m "what changed"` then `git push origin vX.Y.Z`.
+   CI checks that the tag equals the version.
+5. Build the wheel: `python -m pip wheel . --no-deps -w dist`. The file is
+   `dist/soterix_qa_shared-X.Y.Z-py3-none-any.whl`.
+6. In each test repository: copy the wheel into `vendor/`, delete the old
+   wheel, change the `==` version in `requirements.txt`, run
+   `pip install -r requirements.txt`, run the offline suites, commit.
+
+Each test repository has a test that fails when the installed version, the
+`==` line and the wheel in `vendor/` disagree.
+
+## Where to read next
 
 | | |
 |---|---|

@@ -9,7 +9,7 @@ module.
   the package as a built wheel from their own `vendor/` folder. Neither
   needs access to this repository to run.
 - A change here reaches them only as a new wheel. The release steps are in
-  `README.md` under Install, and in `docs/MERGE_RUNBOOK.md`.
+  `README.md` under "Release a new version", and in `docs/MERGE_RUNBOOK.md`.
 - CI ran on GitHub's machines on every push to the company's copy of this
   repository: the tests, `ruff`, the prose check, a built-wheel import
   check, and on a `v*` tag the check that the tag equals the version. It is
