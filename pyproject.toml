@@ -34,8 +34,9 @@ email = ["msal>=1.20,<2"]
 # difference. Measured 2026-08-28: the UI repo had ruff 0.16.1 and the API
 # repo 0.16.2.
 #
-# Exact pins go stale. Dependabot bumps them as PRs that CI has to prove,
-# which is what keeps "reproducible" from also meaning "frozen".
+# Exact pins go stale. While the repo was in use, Dependabot bumped them as
+# PRs that CI had to prove, which kept "reproducible" from also meaning
+# "frozen".
 dev = ["pytest==9.1.1", "ruff==0.16.5", "pytest-html==4.2.0"]
 
 [tool.setuptools.package-data]

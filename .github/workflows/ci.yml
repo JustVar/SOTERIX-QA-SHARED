@@ -12,7 +12,7 @@ name: ci
 
 # Each action is pinned to a commit SHA, with its version in the comment beside it.
 # A tag moves: `actions/checkout@v4` is whatever that tag points at today.
-# Dependabot reads the comment and keeps the pin current.
+# While the repo was in use, Dependabot read the comment and kept the pin current.
 
 on:
   push:
