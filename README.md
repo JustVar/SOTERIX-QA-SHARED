@@ -174,7 +174,7 @@ Paths are relative to the consumer repository's root.
 | Path | Tracked | What It Holds |
 |---|---|---|
 | `config/qatouch_case_mapping.json` | yes | Node id to case key. The only place mappings live. |
-| `history/YYYY-MM.jsonl` | yes | One line per armed run. See `docs/RUN_HISTORY.md`. |
+| `history/YYYY-MM.jsonl` | no | One line per armed run. The archived nightly committed it; the test repos' main branches ignore the folder. See `docs/RUN_HISTORY.md`. |
 | `logs/last_run_results.json` | no | Every result from the last run. |
 | `logs/upload_failures.json` | no | Uploads to replay. |
 | `logs/upload_failures_unreplayable.json` | no | Failures no replay can fix. |

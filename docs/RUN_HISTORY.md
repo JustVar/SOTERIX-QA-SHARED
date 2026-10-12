@@ -3,6 +3,11 @@
 One short line per run, tracked in git. This is the only thing a test run
 leaves behind that belongs in a repository.
 
+This page describes the design. The scheduled setup on the
+`archive/pre-pivot` branch committed these lines. On the test repos' main
+branches `history/` is in `.gitignore`, because nothing scheduled runs there,
+so the lines stay on the machine that ran the tests.
+
 ## What Is and Is Not Tracked
 
 | | Where | Tracked | Why |
