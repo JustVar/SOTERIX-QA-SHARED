@@ -12,8 +12,8 @@ QA/QC Manager, for Soterix Systems, an AI video-surveillance SaaS company.
   API answers success for results it discards.
 - A run report page that names the shared cause of a group of failures and
   marks known defects apart from new ones.
-- 850 tests of its own. 31 tagged releases, each one installed into both test
-  repos as a package.
+- 850 tests of its own. 31 tagged releases. Both test repos install a pinned
+  release as a wheel.
 - Where to start:
   - The read-back upload
     ([src/soterix_qa_shared/qatouch/upload.py](src/soterix_qa_shared/qatouch/upload.py)).
