@@ -258,13 +258,14 @@ def pytest_configure(config: Any) -> None:
     # A collection-only pass produces no results, and writing its empty
     # record over a real one destroys the last real run. Measured: a bare
     # `pytest --collect-only` replaced a 20-result record with zero, and no
-    # reader could tell - run_suite checks only that the file exists, so an
-    # empty one reads as "a run with no failures" rather than "no run".
+    # reader could tell - the suite runner of the time checked only that the
+    # file existed, so an empty one read as "a run with no failures" rather
+    # than "no run".
     #
-    # Four shipped tools run a bare collect-only pass after a suite
-    # (run_suite, qatouch_mapper, qatouch_sync_check, qatouch_run_manager),
-    # and so does a merge gate. Both sibling repo-writing plugins in the UI
-    # repo carry this guard; this one did not, which the sink split made
+    # When this guard was added, four tools ran a bare collect-only pass
+    # after a suite, and so did a merge gate. Those tools are archived now,
+    # but a merge gate still does. Both sibling repo-writing plugins in the
+    # UI repo carry this guard; this one did not, which the sink split made
     # destructive rather than merely absent.
     if _is_dry_pass(config):
         return
@@ -357,7 +358,7 @@ class QATouchReporter:
         path = MAPPING_PATH
         if path is None or not path.exists():
             log.warning(f'Mapping file not found: {path}')
-            log.warning('Run: python tools/qatouch_mapper.py build')
+            log.warning('Create it by hand: it maps each test node id to its QA Touch case key')
             return {}
 
         try:
