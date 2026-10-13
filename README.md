@@ -1,5 +1,8 @@
 # Soterix QA Shared
 
+The shared pytest pipeline behind the browser and API test suites: run
+reports, the verified QA Touch upload and the release gates.
+
 ## About this repo
 
 The test pipeline that two test repos share: Soterix-WebApp-QA (browser tests)
